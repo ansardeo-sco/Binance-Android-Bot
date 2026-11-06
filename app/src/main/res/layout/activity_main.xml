@@ -1,25 +1,138 @@
-        <!-- Active Positions Card -->
-        <LinearLayout
+<?xml version="1.0" encoding="utf-8"?>
+
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:background="#101820">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="#1E1E1E"
-            android:padding="15dp"
-            android:layout_marginBottom="15dp">
+            android:text="BINANCE FUTURES BOT"
+            android:textColor="#FFFFFF"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:padding="16dp" />
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Active Positions / Trades"
-                android:textColor="#B0BEC5"
-                android:textSize="12sp" />
+        <TextView
+            android:id="@+id/txtStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Status: Checking..."
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:padding="12dp" />
 
-            <TextView
-                android:id="@+id/txtActivePositions"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="No active positions found"
-                android:textColor="#FFFFFF"
-                android:textSize="14sp"
-                android:paddingTop="5dp" />
-        </LinearLayout>
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="USDT Available Balance"
+            android:textColor="#B0BEC5"
+            android:textSize="14sp"
+            android:paddingTop="15dp" />
+
+        <TextView
+            android:id="@+id/txtBalance"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Loading..."
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:padding="12dp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#607D8B"
+            android:layout_marginTop="15dp"
+            android:layout_marginBottom="15dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="MANUAL INITIAL ENTRY"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:paddingBottom="12dp" />
+
+        <EditText
+            android:id="@+id/etSymbol"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Symbol e.g. BTCUSDT"
+            android:inputType="textCapCharacters"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#B0BEC5"
+            android:padding="12dp" />
+
+        <EditText
+            android:id="@+id/etDirection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Direction: LONG or SHORT"
+            android:inputType="textCapCharacters"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#B0BEC5"
+            android:padding="12dp" />
+
+        <EditText
+            android:id="@+id/etMargin"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Initial Margin (USDT)"
+            android:inputType="numberDecimal"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#B0BEC5"
+            android:padding="12dp" />
+
+        <Button
+            android:id="@+id/btnSubmitEntry"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="START TRADING CYCLE"
+            android:layout_marginTop="15dp" />
+
+        <Button
+            android:id="@+id/btnRefresh"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="REFRESH BALANCE"
+            android:layout_marginTop="8dp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#607D8B"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="15dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ACTIVE POSITIONS / TRADES"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/txtActivePositions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="No active positions found"
+            android:textColor="#B0BEC5"
+            android:textSize="14sp"
+            android:padding="12dp" />
+
+    </LinearLayout>
+
+</ScrollView>
