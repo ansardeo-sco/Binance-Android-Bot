@@ -1,20 +1,87 @@
 package com.ansardeo.binancebot
 
 import android.os.Bundle
+import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.io.IOException
 
 class MainActivity : AppCompatActivity() {
+
+    private lateinit.binder var txtStatus: TextView
+    private lateinit var etSymbol: EditText
+    private lateinit var etDirection: EditText
+    private lateinit var etMargin: EditText
+    private lateinit var btnSubmitEntry: Button
+
+    private val client = OkHttpClient()
+    // Replace or configure your backend server URL here (Localhost or Cloud Deployment)
+    private val backendUrl = "https://ansardeo-sco-binance-android-bot.hf.space/api/v1/trade/initial-entry"
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // Simple UI View for Android Bot Dashboard
-        val textView = TextView(this).apply {
-            text = "🤖 Binance Android Automated Trading Bot\nStatus: Connected & Running"
-            textSize = 18f
-            setPadding(50, 100, 50, 50)
+        setContentView(R.layout.activity_main)
+
+        // Initialize UI components
+        val txtStatus = findViewById<TextView>(R.id.txtStatus)
+        etSymbol = findViewById(R.id.etSymbol)
+        etDirection = findViewById(R.id.etDirection)
+        etMargin = findViewById(R.id.etMargin)
+        btnSubmitEntry = findViewById(R.id.btnSubmitEntry)
+
+        txtStatus.text = "Status: Connected to Trading UI"
+
+        btnSubmitEntry.setOnClickListener {
+            val symbol = etSymbol.text.toString().trim().uppercase()
+            val direction = etDirection.text.toString().trim().uppercase()
+            val marginStr = etMargin.text.toString().trim()
+
+            if (symbol.isEmpty() || direction.isEmpty() || marginStr.isEmpty()) {
+                Toast.makeText(this, "Please fill in all fields", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            val margin = marginStr.toDoubleOrNull() ?: 10.0
+            sendInitialEntryToServer(symbol, direction, margin)
         }
-        
-        setContentView(textView)
+    }
+
+    private fun sendInitialEntryToServer(symbol: String, direction: String, margin: Double) {
+        val jsonBody = JSONObject().apply {
+            put("symbol", symbol)
+            put("direction", direction)
+            put("initial_margin", margin)
+            put("leverage", 10)
+        }
+
+        val body = jsonBody.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+        val request = Request.Builder()
+            .url(backendUrl)
+            .post(body)
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "Connection Failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                runOnUiThread {
+                    if (response.isSuccessful) {
+                        Toast.makeText(this@MainActivity, "Trading Cycle Started Successfully!", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(this@MainActivity, "Server Error: ${response.code}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        })
     }
 }
