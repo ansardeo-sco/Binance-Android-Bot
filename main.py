@@ -2,10 +2,12 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime
 from pydantic import BaseModel
+import asyncio
 
 from config import settings
 from database import engine, Base, get_db
 import models
+from engine import engine as trading_engine
 
 # Create database tables automatically on startup
 Base.metadata.create_all(bind=engine)
@@ -16,7 +18,12 @@ app = FastAPI(
     description="Automated Trading Management Bot for Binance USDⓈ-M Futures"
 )
 
-# Pydantic models for request validation
+# Startup event to run background market monitoring
+@app.on_event("startup")
+async def startup_event():
+    # Run market monitoring loop in the background
+    asyncio.create_task(trading_engine.monitor_market())
+
 class InitialEntryRequest(BaseModel):
     symbol: str
     direction: str  # LONG or SHORT
@@ -37,7 +44,8 @@ def health_check(db: Session = Depends(get_db)):
     return {
         "status": "healthy",
         "database": "connected",
-        "testnet_mode": settings.BINANCE_USE_TESTNET
+        "testnet_mode": settings.BINANCE_USE_TESTNET,
+        "binance_connection": trading_engine.client.verify_connection()
     }
 
 @app.post("/api/v1/trade/initial-entry")
@@ -45,11 +53,9 @@ def create_initial_entry(request: InitialEntryRequest, db: Session = Depends(get
     """
     Endpoint for taking initial manual entry and starting a new trading cycle.
     """
-    # Generate unique cycle ID e.g., BTCUSDT-LONG-001
     symbol_upper = request.symbol.upper()
     direction_upper = request.direction.upper()
     
-    # Count existing cycles for this symbol & direction to generate sequence number
     existing_count = db.query(models.TradingCycle).filter(
         models.TradingCycle.symbol == symbol_upper,
         models.TradingCycle.direction == direction_upper
@@ -58,7 +64,6 @@ def create_initial_entry(request: InitialEntryRequest, db: Session = Depends(get
     sequence_num = existing_count + 1
     cycle_id = f"{symbol_upper}-{direction_upper}-{sequence_num:03d}"
     
-    # Create new cycle with snapshot settings
     new_cycle = models.TradingCycle(
         cycle_id=cycle_id,
         symbol=symbol_upper,
