@@ -32,14 +32,14 @@ jobs:
     - name: Build Android APK with Gradle
       run: |
         chmod +x gradlew || true
-        # If gradlew wrapper is not present, use standard gradle if available or check project structure
         if [ -f "gradlew" ]; then
           ./gradlew assembleDebug
         else
-          echo "Gradle wrapper missing, initializing basic build check..."
-          ls -la
+          echo "Gradle wrapper missing, skipping gradle build..."
         fi
 
-    - name: Verify Build Completion
-      run: |
-        echo "Binance Android Bot & Backend Build Pipeline Completed Successfully!"
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-debug
+        path: app/build/outputs/apk/debug/app-debug.apk
