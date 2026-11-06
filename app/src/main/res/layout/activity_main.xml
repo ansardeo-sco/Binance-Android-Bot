@@ -1,106 +1,150 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="20dp"
-    android:background="#121212">
+    android:background="#121212"
+    android:padding="20dp">
 
-    <!-- App Title -->
-    <TextView
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="🤖 Binance Automated Trading Bot"
-        android:textSize="20sp"
-        android:textStyle="bold"
-        android:textColor="#00E676"
-        android:gravity="center"
-        android:paddingBottom="20dp" />
+        android:orientation="vertical">
 
-    <!-- Status Card / View -->
-    <TextView
-        android:id="@+id/txtStatus"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Status: Connected &amp; Monitoring"
-        android:textSize="14sp"
-        android:textColor="#FFFFFF"
-        android:background="#1E1E1E"
-        android:padding="12dp"
-        android:gravity="center"
-        android:layout_marginBottom="20dp" />
+        <!-- App Title -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🤖 Binance Automated Trading Bot"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:textColor="#00E676"
+            android:gravity="center"
+            android:paddingBottom="15dp" />
 
-    <!-- Symbol Input -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Trading Symbol (e.g., BTCUSDT)"
-        android:textColor="#B0BEC5"
-        android:textSize="12sp"
-        android:paddingBottom="4dp" />
+        <!-- Live Balance Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#1E1E1E"
+            android:padding="15dp"
+            android:layout_marginBottom="15dp">
 
-    <EditText
-        android:id="@+id/etSymbol"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="BTCUSDT"
-        android:textColor="#FFFFFF"
-        android:textSize="16sp"
-        android:background="#2C2C2C"
-        android:padding="12dp"
-        android:layout_marginBottom="15dp" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Account Balance (USDT)"
+                android:textColor="#B0BEC5"
+                android:textSize="12sp" />
 
-    <!-- Direction Selection -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Direction (LONG / SHORT)"
-        android:textColor="#B0BEC5"
-        android:textSize="12sp"
-        android:paddingBottom="4dp" />
+            <TextView
+                android:id="@+id/txtBalance"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Loading Balance..."
+                android:textColor="#00E676"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:paddingTop="5dp" />
+        </LinearLayout>
 
-    <EditText
-        android:id="@+id/etDirection"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="LONG"
-        android:textColor="#FFFFFF"
-        android:textSize="16sp"
-        android:background="#2C2C2C"
-        android:padding="12dp"
-        android:layout_marginBottom="15dp" />
+        <!-- Status Card -->
+        <TextView
+            android:id="@+id/txtStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Status: Connected &amp; Monitoring"
+            android:textSize="14sp"
+            android:textColor="#FFFFFF"
+            android:background="#1E1E1E"
+            android:padding="12dp"
+            android:gravity="center"
+            android:layout_marginBottom="15dp" />
 
-    <!-- Margin Input -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Initial Margin (USDT)"
-        android:textColor="#B0BEC5"
-        android:textSize="12sp"
-        android:paddingBottom="4dp" />
+        <!-- Symbol Input -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Trading Symbol (e.g., BTCUSDT)"
+            android:textColor="#B0BEC5"
+            android:textSize="12sp"
+            android:paddingBottom="4dp" />
 
-    <EditText
-        android:id="@+id/etMargin"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="10.0"
-        android:inputType="numberDecimal"
-        android:textColor="#FFFFFF"
-        android:textSize="16sp"
-        android:background="#2C2C2C"
-        android:padding="12dp"
-        android:layout_marginBottom="25dp" />
+        <EditText
+            android:id="@+id/etSymbol"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="BTCUSDT"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:background="#2C2C2C"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp" />
 
-    <!-- Submit Button -->
-    <Button
-        android:id="@+id/btnSubmitEntry"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Start Trading Cycle"
-        android:textSize="16sp"
-        android:textStyle="bold"
-        android:backgroundTint="#00E676"
-        android:textColor="#000000"
-        android:padding="12dp" />
+        <!-- Direction Selection -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Direction (LONG / SHORT)"
+            android:textColor="#B0BEC5"
+            android:textSize="12sp"
+            android:paddingBottom="4dp" />
 
-</LinearLayout>
+        <EditText
+            android:id="@+id/etDirection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="LONG"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:background="#2C2C2C"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Margin Input -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Initial Margin (USDT)"
+            android:textColor="#B0BEC5"
+            android:textSize="12sp"
+            android:paddingBottom="4dp" />
+
+        <EditText
+            android:id="@+id/etMargin"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="10.0"
+            android:inputType="numberDecimal"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:background="#2C2C2C"
+            android:padding="12dp"
+            android:layout_marginBottom="20dp" />
+
+        <!-- Submit Button -->
+        <Button
+            android:id="@+id/btnSubmitEntry"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Start Trading Cycle"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:backgroundTint="#00E676"
+            android:textColor="#000000"
+            android:padding="12dp"
+            android:layout_marginBottom="10dp" />
+
+        <!-- Refresh Balance Button -->
+        <Button
+            android:id="@+id/btnRefresh"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Refresh Balance"
+            android:textSize="14sp"
+            android:backgroundTint="#2C2C2C"
+            android:textColor="#FFFFFF"
+            android:padding="10dp" />
+
+    </LinearLayout>
+</ScrollView>
