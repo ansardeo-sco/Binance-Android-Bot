@@ -1,0 +1,20 @@
+package com.ansardeo.binancebot
+
+import android.os.Bundle
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+
+class MainActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        
+        // Simple UI View for Android Bot Dashboard
+        val textView = TextView(this).apply {
+            text = "🤖 Binance Android Automated Trading Bot\nStatus: Connected & Running"
+            textSize = 18f
+            setPadding(50, 100, 50, 50)
+        }
+        
+        setContentView(textView)
+    }
+}
