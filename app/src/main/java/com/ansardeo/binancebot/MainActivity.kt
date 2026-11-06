@@ -1,3 +1,4 @@
+
 package com.ansardeo.binancebot
 
 import android.os.Bundle
@@ -39,7 +40,6 @@ class MainActivity : AppCompatActivity() {
 
         txtStatus.text = "Status: Connected & Monitoring"
 
-        // Fetch balance on startup
         fetchAccountBalance()
 
         btnSubmitEntry.setOnClickListener {
@@ -63,18 +63,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun fetchAccountBalance() {
         txtBalance.text = "Fetching..."
+
         val request = Request.Builder()
             .url("$backendBaseUrl/balance")
             .get()
             .build()
 
         client.newCall(request).enqueue(object : Callback {
-            private fun onFailure(call: Call, e: IOException) {
-                runOnUiThread {
-                    txtBalance.text = "Error Loading"
-                    Toast.makeText(this@MainActivity, "Failed to fetch balance", Toast.LENGTH_SHORT).show()
-                }
-            }
 
             override fun onFailure(call: Call, e: IOException) {
                 runOnUiThread {
@@ -84,6 +79,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onResponse(call: Call, response: Response) {
                 val responseData = response.body?.string()
+
                 runOnUiThread {
                     if (response.isSuccessful && responseData != null) {
                         try {
@@ -101,7 +97,11 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    private fun sendInitialEntryToServer(symbol: String, direction: String, margin: Double) {
+    private fun sendInitialEntryToServer(
+        symbol: String,
+        direction: String,
+        margin: Double
+    ) {
         val jsonBody = JSONObject().apply {
             put("symbol", symbol)
             put("direction", direction)
@@ -109,26 +109,42 @@ class MainActivity : AppCompatActivity() {
             put("leverage", 10)
         }
 
-        val body = jsonBody.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+        val body = jsonBody.toString()
+            .toRequestBody("application/json; charset=utf-8".toMediaType())
+
         val request = Request.Builder()
             .url("$backendBaseUrl/trade/initial-entry")
             .post(body)
             .build()
 
         client.newCall(request).enqueue(object : Callback {
+
             override fun onFailure(call: Call, e: IOException) {
                 runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Connection Failed: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Connection Failed: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             }
 
             override fun onResponse(call: Call, response: Response) {
                 runOnUiThread {
                     if (response.isSuccessful) {
-                        Toast.makeText(this@MainActivity, "Trading Cycle Started Successfully!", Toast.LENGTH_LONG).show()
-                        fetchAccountBalance() // Refresh balance after starting trade
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Trading Cycle Started Successfully!",
+                            Toast.LENGTH_LONG
+                        ).show()
+
+                        fetchAccountBalance()
                     } else {
-                        Toast.makeText(this@MainActivity, "Server Error: ${response.code}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Server Error: ${response.code}",
+                            Toast.LENGTH_LONG
+                        ).show()
                     }
                 }
             }
