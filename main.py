@@ -14,6 +14,7 @@ from binance_client import binance_client
 from engine import trading_engine
 from order_manager import order_manager
 from risk_manager import risk_manager
+from api_routes import router
 
 
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +28,8 @@ Base.metadata.create_all(bind=engine)
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(trading_engine.start())
 
+    logger.info("Application started")
+
     yield
 
     trading_engine.stop()
@@ -38,6 +41,7 @@ async def lifespan(app: FastAPI):
         pass
 
     binance_client.close()
+    logger.info("Application stopped")
 
 
 app = FastAPI(
@@ -47,9 +51,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(router)
+
 
 class InitialEntryRequest(BaseModel):
     symbol: str
+
     direction: str
 
     initial_margin: float = Field(
@@ -81,6 +88,7 @@ def health_check(db: Session = Depends(get_db)):
             __import__("sqlalchemy").text("SELECT 1")
         )
         database_status = "connected"
+
     except Exception:
         database_status = "disconnected"
 
@@ -123,6 +131,8 @@ def create_initial_entry(
     request: InitialEntryRequest,
     db: Session = Depends(get_db),
 ):
+    new_cycle = None
+
     try:
         validated = risk_manager.validate_initial_entry(
             symbol=request.symbol,
@@ -157,17 +167,19 @@ def create_initial_entry(
         )
 
         return {
+            "success": bool(result.get("success")),
             "message": "Initial entry request processed.",
             "cycle_id": new_cycle.id,
             "symbol": new_cycle.symbol,
             "direction": new_cycle.direction,
             "status": new_cycle.status,
-            "order_placed": True,
+            "order_placed": bool(result.get("success")),
             "order": result,
         }
 
     except ValueError as error:
         db.rollback()
+
         raise HTTPException(
             status_code=400,
             detail=str(error),
@@ -175,18 +187,35 @@ def create_initial_entry(
 
     except RuntimeError as error:
         db.rollback()
+
         raise HTTPException(
             status_code=503,
             detail=str(error),
         )
 
-    except Exception as error:
+    except Exception:
         db.rollback()
+
         logger.exception("Initial entry request failed")
+
+        if new_cycle is not None:
+            try:
+                saved_cycle = (
+                    db.query(TradingCycle)
+                    .filter(TradingCycle.id == new_cycle.id)
+                    .first()
+                )
+
+                if saved_cycle:
+                    saved_cycle.status = "ERROR"
+                    db.commit()
+
+            except Exception:
+                db.rollback()
 
         raise HTTPException(
             status_code=500,
-            detail="Unable to process initial entry.",
+            detail="Unable to process initial entry. Check exchange order history before retrying.",
         )
 
 
@@ -251,6 +280,9 @@ def get_cycle(
         "direction": cycle.direction,
         "status": cycle.status,
         "average_entry_price": cycle.average_entry_price,
+        "total_filled_quantity": cycle.total_filled_quantity,
+        "take_profit_price": cycle.take_profit_price,
+        "reentry_price": cycle.reentry_price,
         "entries": [
             {
                 "id": entry.id,
@@ -259,6 +291,7 @@ def get_cycle(
                 "entry_price": entry.entry_price,
                 "filled_quantity": entry.filled_quantity,
                 "remaining_quantity": entry.remaining_quantity,
+                "stop_loss_price": entry.stop_loss_price,
             }
             for entry in entries
         ],
