@@ -1,0 +1,193 @@
+
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#080F1D"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="18dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Manual Entry"
+            android:textColor="#FFFFFF"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="5dp"
+            android:text="Prepare your initial trading entry"
+            android:textColor="#8FA3BD"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:background="#193A35"
+            android:padding="12dp"
+            android:text="● TESTNET  |  PREVIEW ONLY"
+            android:textColor="#53C68C"
+            android:textStyle="bold"
+            android:textSize="12sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:background="#111D2F"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="TRADING PAIR"
+                android:textColor="#8FA3BD"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <Spinner
+                android:id="@+id/spEntrySymbol"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="5dp"
+                android:backgroundTint="#F0B90B" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:text="POSITION DIRECTION"
+                android:textColor="#8FA3BD"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <RadioGroup
+                android:id="@+id/rgDirection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="8dp">
+
+                <RadioButton
+                    android:id="@+id/rbLong"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:buttonTint="#53C68C"
+                    android:checked="true"
+                    android:text="LONG"
+                    android:textColor="#53C68C"
+                    android:textStyle="bold" />
+
+                <RadioButton
+                    android:id="@+id/rbShort"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:buttonTint="#F05B67"
+                    android:text="SHORT"
+                    android:textColor="#F05B67"
+                    android:textStyle="bold" />
+
+            </RadioGroup>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="INITIAL MARGIN (USDT)"
+                android:textColor="#8FA3BD"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <EditText
+                android:id="@+id/etEntryMargin"
+                android:layout_width="match_parent"
+                android:layout_height="50dp"
+                android:layout_marginTop="5dp"
+                android:background="#1B2B43"
+                android:hint="Enter margin amount"
+                android:inputType="numberDecimal"
+                android:padding="12dp"
+                android:text="1"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#8190A5" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="LEVERAGE"
+                android:textColor="#8FA3BD"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <Spinner
+                android:id="@+id/spEntryLeverage"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="5dp"
+                android:backgroundTint="#F0B90B" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="#111D2F"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ENTRY SUMMARY"
+                android:textColor="#F0B90B"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/txtEntrySummary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:lineSpacingExtra="7dp"
+                android:text="Pair: BTCUSDT&#10;Direction: LONG&#10;Margin: 1 USDT&#10;Leverage: 5x"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp" />
+
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="#3A2E16"
+            android:padding="14dp"
+            android:text="Trading submission is currently disabled. This screen is for configuration preview only."
+            android:textColor="#F0B90B"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btnSubmitEntry"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="16dp"
+            android:enabled="false"
+            android:text="SUBMIT ENTRY — DISABLED"
+            android:textColor="#8190A5" />
+
+    </LinearLayout>
+
+</ScrollView>
