@@ -89,7 +89,10 @@ class TradingEngine:
                 cycles = (
                     db.query(TradingCycle)
                     .filter(
-                        TradingCycle.status == "ACTIVE"
+                        TradingCycle.status.in_([
+                            "ACTIVE",
+                            "CLOSING_TP",
+                        ])
                     )
                     .order_by(TradingCycle.id.asc())
                     .all()
@@ -168,6 +171,19 @@ class TradingEngine:
 
         cycle.average_entry_price = average_price
         cycle.total_filled_quantity = total_quantity
+
+        # TP شروع ہونے کے بعد باقی تمام Entries بھی بند ہوں گی۔
+        # قیمت واپس آنے پر بھی TP کا عمل نہیں رکے گا۔
+        if cycle.status == "CLOSING_TP":
+
+            take_profit_manager.process_cycle(
+                db=db,
+                cycle=cycle,
+                current_price=price,
+            )
+
+            db.commit()
+            return
 
         if cycle.direction == "LONG":
 
@@ -259,7 +275,6 @@ class TradingEngine:
                 )
 
         # 9% پر Averaging بھی اسی مرحلے میں چیک ہوگی۔
-        # Opposite Position لگنے کے بعد یہاں سے عمل نہیں رکے گا۔
         if adverse_percent >= cycle.averaging_percent:
 
             averaging_result = (
