@@ -1,3 +1,4 @@
+
 import logging
 from datetime import datetime, timezone
 
@@ -25,12 +26,14 @@ class ReconciliationManager:
                 for symbol in settings.ALLOWED_SYMBOLS
             ]
 
+            # پہلے Exchange سے مکمل تازہ معلومات حاصل کریں۔
             positions = exchange.fetch_positions(symbols)
 
             now = datetime.now(timezone.utc)
 
-            # پہلے موجودہ ریکارڈز کو صفر کریں۔
-            # صرف کامیاب Exchange fetch کے بعد یہ کام کیا جا رہا ہے۔
+            synced = []
+
+            # کامیاب Exchange response کے بعد ہی پرانے ریکارڈز صفر کریں۔
             existing_records = (
                 db.query(ExchangePosition)
                 .filter(
@@ -44,8 +47,6 @@ class ReconciliationManager:
                 record.unrealized_pnl = 0.0
                 record.last_synced_at = now
 
-            synced = []
-
             for position in positions:
 
                 info = position.get("info") or {}
@@ -55,7 +56,12 @@ class ReconciliationManager:
                     or info.get("symbol")
                 )
 
-                if not symbol or symbol not in symbols:
+                if not symbol:
+                    continue
+
+                symbol = str(symbol)
+
+                if symbol not in symbols:
                     continue
 
                 position_side = str(
@@ -136,6 +142,7 @@ class ReconciliationManager:
                 "success": True,
                 "positions_synced": len(synced),
                 "positions": synced,
+                "synced_at": now.isoformat(),
             }
 
         except Exception:
