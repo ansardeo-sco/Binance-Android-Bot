@@ -1,7 +1,10 @@
-
 package com.ansardeo.binancebot
 
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.View
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.RadioGroup
@@ -29,25 +32,11 @@ class ManualEntryActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_manual_entry)
 
-        val symbolSpinner = findViewById<Spinner>(
-            R.id.spEntrySymbol
-        )
-
-        val leverageSpinner = findViewById<Spinner>(
-            R.id.spEntryLeverage
-        )
-
-        val directionGroup = findViewById<RadioGroup>(
-            R.id.rgDirection
-        )
-
-        val marginInput = findViewById<EditText>(
-            R.id.etEntryMargin
-        )
-
-        val summary = findViewById<TextView>(
-            R.id.txtEntrySummary
-        )
+        val symbolSpinner = findViewById<Spinner>(R.id.spEntrySymbol)
+        val leverageSpinner = findViewById<Spinner>(R.id.spEntryLeverage)
+        val directionGroup = findViewById<RadioGroup>(R.id.rgDirection)
+        val marginInput = findViewById<EditText>(R.id.etEntryMargin)
+        val summary = findViewById<TextView>(R.id.txtEntrySummary)
 
         symbolSpinner.adapter = ArrayAdapter(
             this,
@@ -63,91 +52,44 @@ class ManualEntryActivity : AppCompatActivity() {
 
         leverageSpinner.setSelection(3)
 
-        fun updateSummary() {
-            val symbol = symbolSpinner.selectedItem.toString()
+        val updateSummary = {
+            val symbol = symbolSpinner.selectedItem?.toString() ?: "BTCUSDT"
+            val direction = if (directionGroup.checkedRadioButtonId == R.id.rbShort) "SHORT" else "LONG"
+            val margin = marginInput.text.toString().ifBlank { "0" }
+            val leverage = leverageSpinner.selectedItem?.toString() ?: "5x"
 
-            val direction =
-                if (directionGroup.checkedRadioButtonId == R.id.rbShort) {
-                    "SHORT"
-                } else {
-                    "LONG"
-                }
-
-            val margin = marginInput.text.toString()
-                .ifBlank { "0" }
-
-            val leverage = leverageSpinner.selectedItem.toString()
-
-            summary.text =
-                "Pair: $symbol\n" +
-                "Direction: $direction\n" +
-                "Margin: $margin USDT\n" +
-                "Leverage: $leverage\n\n" +
-                "Status: Preview only"
+            summary.text = "Pair: $symbol\n" +
+                    "Direction: $direction\n" +
+                    "Margin: $margin USDT\n" +
+                    "Leverage: $leverage\n\n" +
+                    "Status: Preview only"
         }
 
-        symbolSpinner.onItemSelectedListener =
-            object : android.widget.AdapterView.OnItemSelectedListener {
-
-                override fun onItemSelected(
-                    parent: android.widget.AdapterView<*>?,
-                    view: android.view.View?,
-                    position: Int,
-                    id: Long
-                ) {
-                    updateSummary()
-                }
-
-                override fun onNothingSelected(
-                    parent: android.widget.AdapterView<*>?
-                ) {}
+        symbolSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                updateSummary()
             }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
 
-        leverageSpinner.onItemSelectedListener =
-            object : android.widget.AdapterView.OnItemSelectedListener {
-
-                override fun onItemSelected(
-                    parent: android.widget.AdapterView<*>?,
-                    view: android.view.View?,
-                    position: Int,
-                    id: Long
-                ) {
-                    updateSummary()
-                }
-
-                override fun onNothingSelected(
-                    parent: android.widget.AdapterView<*>?
-                ) {}
+        leverageSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                updateSummary()
             }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
 
         directionGroup.setOnCheckedChangeListener { _, _ ->
             updateSummary()
         }
 
-        marginInput.addTextChangedListener(
-            object : android.text.TextWatcher {
-
-                override fun beforeTextChanged(
-                    s: CharSequence?,
-                    start: Int,
-                    count: Int,
-                    after: Int
-                ) {}
-
-                override fun onTextChanged(
-                    s: CharSequence?,
-                    start: Int,
-                    before: Int,
-                    count: Int
-                ) {
-                    updateSummary()
-                }
-
-                override fun afterTextChanged(
-                    s: android.text.Editable?
-                ) {}
+        marginInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                updateSummary()
             }
-        )
+            override fun afterTextChanged(s: Editable?) {}
+        })
 
         updateSummary()
     }
