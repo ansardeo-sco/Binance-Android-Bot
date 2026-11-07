@@ -13,35 +13,63 @@ logger = logging.getLogger(__name__)
 
 class ReconciliationManager:
 
+    @staticmethod
+    def _symbol_map(exchange):
+        mapping = {}
+
+        for raw_symbol in settings.ALLOWED_SYMBOLS:
+            market = exchange.market(raw_symbol)
+
+            unified_symbol = market.get("symbol")
+
+            if not unified_symbol:
+                raise RuntimeError(
+                    f"Could not resolve exchange symbol: {raw_symbol}"
+                )
+
+            mapping[raw_symbol.upper()] = unified_symbol
+            mapping[unified_symbol.upper()] = unified_symbol
+
+            market_id = market.get("id")
+
+            if market_id:
+                mapping[str(market_id).upper()] = unified_symbol
+
+        return mapping
+
     def sync_positions(self):
 
         db = SessionLocal()
 
         try:
-
             exchange = binance_client.exchange
+            binance_client._load_markets_sync()
 
-            symbols = [
-                f"{symbol[:-4]}/USDT:USDT"
-                for symbol in settings.ALLOWED_SYMBOLS
-            ]
+            symbol_map = self._symbol_map(exchange)
 
-            # پہلے Exchange سے مکمل تازہ معلومات حاصل کریں۔
+            symbols = sorted({
+                symbol_map[raw.upper()]
+                for raw in settings.ALLOWED_SYMBOLS
+            })
+
+            # Do not alter local snapshots unless the exchange request succeeds.
             positions = exchange.fetch_positions(symbols)
 
-            now = datetime.now(timezone.utc)
+            if positions is None:
+                raise RuntimeError(
+                    "Binance returned no valid position response."
+                )
 
+            now = datetime.now(timezone.utc)
             synced = []
 
-            # کامیاب Exchange response کے بعد ہی پرانے ریکارڈز صفر کریں۔
             existing_records = (
                 db.query(ExchangePosition)
-                .filter(
-                    ExchangePosition.symbol.in_(symbols)
-                )
+                .filter(ExchangePosition.symbol.in_(symbols))
                 .all()
             )
 
+            # Reset only after a successful exchange response.
             for record in existing_records:
                 record.exchange_quantity = 0.0
                 record.unrealized_pnl = 0.0
@@ -51,26 +79,21 @@ class ReconciliationManager:
 
                 info = position.get("info") or {}
 
-                symbol = (
+                raw_symbol = (
                     position.get("symbol")
                     or info.get("symbol")
                 )
 
+                if not raw_symbol:
+                    continue
+
+                symbol = symbol_map.get(str(raw_symbol).upper())
+
                 if not symbol:
-                    continue
-
-                symbol = str(symbol)
-
-                if symbol not in symbols:
-                    continue
-
-                position_side = str(
-                    info.get("positionSide")
-                    or position.get("side")
-                    or ""
-                ).upper()
-
-                if position_side not in ("LONG", "SHORT"):
+                    logger.warning(
+                        "Skipping unrecognized exchange symbol: %s",
+                        raw_symbol,
+                    )
                     continue
 
                 contracts = position.get("contracts")
@@ -78,11 +101,35 @@ class ReconciliationManager:
                 if contracts is None:
                     contracts = info.get("positionAmt", 0)
 
-                quantity = abs(float(contracts or 0))
+                signed_quantity = float(contracts or 0)
+                quantity = abs(signed_quantity)
 
-                entry_price = position.get("entryPrice")
-                mark_price = position.get("markPrice")
-                unrealized_pnl = position.get("unrealizedPnl")
+                position_side = str(
+                    info.get("positionSide")
+                    or ""
+                ).upper()
+
+                if position_side == "BOTH":
+                    if quantity > 0:
+                        raise RuntimeError(
+                            "Binance reports one-way position mode (BOTH). "
+                            "This bot requires Hedge Mode with LONG and SHORT sides."
+                        )
+                    continue
+
+                if position_side not in ("LONG", "SHORT"):
+                    unified_side = str(
+                        position.get("side") or ""
+                    ).upper()
+
+                    if unified_side in ("LONG", "SHORT"):
+                        position_side = unified_side
+                    elif quantity > 0:
+                        raise RuntimeError(
+                            f"Could not determine position side for {symbol}."
+                        )
+                    else:
+                        continue
 
                 position_key = f"{symbol}:{position_side}"
 
@@ -96,14 +143,16 @@ class ReconciliationManager:
                 )
 
                 if not record:
-
                     record = ExchangePosition(
                         symbol=symbol,
                         direction=position_side,
                         exchange_position_key=position_key,
                     )
-
                     db.add(record)
+
+                entry_price = position.get("entryPrice")
+                mark_price = position.get("markPrice")
+                unrealized_pnl = position.get("unrealizedPnl")
 
                 record.exchange_quantity = quantity
 
@@ -146,13 +195,9 @@ class ReconciliationManager:
             }
 
         except Exception:
-
             db.rollback()
 
-            logger.exception(
-                "Position reconciliation failed"
-            )
-
+            logger.exception("Position reconciliation failed.")
             raise
 
         finally:
