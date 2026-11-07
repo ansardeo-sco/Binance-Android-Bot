@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from database import SessionLocal
+
 from models import (
     TradingCycle,
     CycleEntry,
@@ -17,6 +18,9 @@ from binance_client import binance_client
 from order_status_manager import order_status_manager
 from take_profit_manager import take_profit_manager
 from stop_loss_manager import stop_loss_manager
+
+from averaging_manager import averaging_manager
+from opposite_position_manager import opposite_position_manager
 
 
 logger = logging.getLogger(__name__)
@@ -44,9 +48,7 @@ class TradingEngine:
             except Exception:
                 logger.exception("Trading engine processing error.")
 
-            await asyncio.sleep(
-                settings.MARKET_POLL_INTERVAL
-            )
+            await asyncio.sleep(settings.MARKET_POLL_INTERVAL)
 
     def stop(self):
         self.running = False
@@ -67,6 +69,7 @@ class TradingEngine:
             db = SessionLocal()
 
             try:
+
                 cycles = (
                     db.query(TradingCycle)
                     .filter(TradingCycle.status == "ACTIVE")
@@ -79,6 +82,7 @@ class TradingEngine:
                         await self.process_cycle(db, cycle)
 
                     except Exception:
+
                         db.rollback()
 
                         logger.exception(
@@ -89,11 +93,7 @@ class TradingEngine:
             finally:
                 db.close()
 
-    async def process_cycle(
-        self,
-        db: Session,
-        cycle: TradingCycle,
-    ):
+    async def process_cycle(self, db: Session, cycle: TradingCycle):
 
         price = await binance_client.get_market_price(
             cycle.symbol
@@ -162,25 +162,26 @@ class TradingEngine:
             ) * 100
 
         else:
-            logger.error(
-                "Invalid cycle direction: %s",
-                cycle.direction,
-            )
+            logger.error("Invalid direction: %s", cycle.direction)
             return
 
-        await self._record_triggers(
-            db=db,
-            cycle=cycle,
-            price=price,
-            adverse_percent=adverse_percent,
+        self._record_warning(
+            db,
+            cycle,
+            price,
+            adverse_percent,
         )
 
-        # Individual entry stop-loss checks run before cycle take-profit.
+        # انفرادی Entry کا Stop Loss پہلے چیک ہوگا۔
         stop_result = stop_loss_manager.process_cycle(
             db=db,
             cycle=cycle,
             current_price=price,
         )
+
+        if stop_result.get("triggered_entries", 0) > 0:
+            db.commit()
+            return
 
         pending_close = (
             db.query(CycleOrder)
@@ -200,11 +201,7 @@ class TradingEngine:
             db.commit()
             return
 
-        if stop_result.get("triggered_entries", 0) > 0:
-            db.commit()
-            return
-
-        # Cycle take-profit closes only entries belonging to this cycle.
+        # اگر TP مکمل ہو تو مزید خودکار Entry نہیں لگے گی۔
         tp_result = take_profit_manager.process_cycle(
             db=db,
             cycle=cycle,
@@ -212,100 +209,70 @@ class TradingEngine:
         )
 
         if tp_result.get("triggered"):
-            self._record_event(
-                db,
-                cycle,
-                "TAKE_PROFIT_REACHED",
-                price,
-                profit_percent,
-                "Take-profit threshold reached. Closing orders submitted.",
+            db.commit()
+            return
+
+        # مخالف سمت کی Entry پہلے، پھر Averaging۔
+        # دونوں Thresholds تک قیمت پہنچنے پر دونوں مراحل چل سکتے ہیں۔
+        if adverse_percent >= cycle.opposite_percent:
+
+            opposite_result = (
+                opposite_position_manager.process_cycle(
+                    db,
+                    cycle,
+                    adverse_percent,
+                )
             )
+
+            db.commit()
+
+            if opposite_result.get("triggered"):
+                return
+
+        if adverse_percent >= cycle.averaging_percent:
+
+            averaging_result = (
+                averaging_manager.process_cycle(
+                    db,
+                    cycle,
+                    adverse_percent,
+                )
+            )
+
+            db.commit()
 
         db.commit()
 
-    async def _record_triggers(
-        self,
-        db: Session,
-        cycle: TradingCycle,
-        price: float,
-        adverse_percent: float,
-    ):
-
-        triggers = [
-            (
-                cycle.warning_percent,
-                "WARNING",
-                "warning_triggered",
-            ),
-            (
-                cycle.opposite_percent,
-                "OPPOSITE_TRIGGER",
-                "opposite_triggered",
-            ),
-            (
-                cycle.averaging_percent,
-                "AVERAGING_TRIGGER",
-                "averaging_triggered",
-            ),
-        ]
-
-        for threshold, event_type, flag_name in triggers:
-
-            if adverse_percent < threshold:
-                continue
-
-            if getattr(cycle, flag_name):
-                continue
-
-            setattr(cycle, flag_name, True)
-
-            self._record_event(
-                db,
-                cycle,
-                event_type,
-                price,
-                adverse_percent,
-                f"{event_type} threshold reached. "
-                "Automated averaging and opposite entries are not "
-                "connected yet.",
-            )
-
     @staticmethod
-    def _record_event(
-        db: Session,
-        cycle: TradingCycle,
-        event_type: str,
-        price: float,
-        percentage: float,
-        message: str,
+    def _record_warning(
+        db,
+        cycle,
+        price,
+        adverse_percent,
     ):
 
-        event_key = f"cycle-{cycle.id}-{event_type}"
-
-        existing = (
-            db.query(CycleEvent)
-            .filter(
-                CycleEvent.idempotency_key == event_key
-            )
-            .first()
-        )
-
-        if existing:
+        if adverse_percent < cycle.warning_percent:
             return
+
+        if cycle.warning_triggered:
+            return
+
+        cycle.warning_triggered = True
 
         event = CycleEvent(
             cycle_id=cycle.id,
             symbol=cycle.symbol,
-            event_type=event_type,
+            event_type="WARNING",
             price=price,
-            percentage=percentage,
+            percentage=adverse_percent,
             status="RECORDED",
-            message=message,
-            idempotency_key=event_key,
+            message="Warning threshold reached.",
+            idempotency_key=f"cycle-{cycle.id}-warning",
             created_at=datetime.now(timezone.utc),
         )
 
         db.add(event)
+        db.commit()
 
 
 trading_engine = TradingEngine()
