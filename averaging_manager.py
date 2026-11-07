@@ -1,3 +1,4 @@
+
 from models import CycleEntry, CycleOrder, CycleEvent
 from automated_entry_manager import automated_entry_manager
 
@@ -22,11 +23,38 @@ class AveragingManager:
                 "message": "Averaging already triggered.",
             }
 
-        if adverse_percent < cycle.averaging_percent:
+        threshold_key = f"cycle-{cycle.id}-averaging-threshold"
+        order_key = f"cycle-{cycle.id}-averaging-order"
+
+        threshold_event = (
+            db.query(CycleEvent)
+            .filter(CycleEvent.idempotency_key == threshold_key)
+            .first()
+        )
+
+        threshold_reached = (
+            adverse_percent >= float(cycle.averaging_percent)
+        )
+
+        # Once reached, the threshold remains recorded even if price recovers.
+        if not threshold_reached and not threshold_event:
             return {"triggered": False}
 
-        # پہلے سے موجود Averaging ریکارڈ دوبارہ آرڈر لگنے سے روکے گا۔
-        existing = (
+        if not threshold_event:
+            threshold_event = CycleEvent(
+                cycle_id=cycle.id,
+                symbol=cycle.symbol,
+                event_type="AVERAGING_THRESHOLD",
+                price=cycle.average_entry_price,
+                percentage=adverse_percent,
+                status="WAITING",
+                message="Averaging threshold reached; waiting for open orders to clear.",
+                idempotency_key=threshold_key,
+            )
+            db.add(threshold_event)
+            db.commit()
+
+        existing_entry = (
             db.query(CycleEntry)
             .filter(
                 CycleEntry.cycle_id == cycle.id,
@@ -35,13 +63,29 @@ class AveragingManager:
             .first()
         )
 
-        if existing:
+        if existing_entry:
+            cycle.averaging_triggered = True
+            threshold_event.status = "ORDER_EXISTS"
+            db.commit()
+
+            return {
+                "triggered": False,
+                "message": "An averaging entry already exists. No duplicate order will be placed.",
+            }
+
+        existing_order_event = (
+            db.query(CycleEvent)
+            .filter(CycleEvent.idempotency_key == order_key)
+            .first()
+        )
+
+        if existing_order_event:
             cycle.averaging_triggered = True
             db.commit()
 
             return {
                 "triggered": False,
-                "message": "An averaging entry already exists.",
+                "message": "An averaging order is already recorded. Reconciliation is required.",
             }
 
         pending = (
@@ -56,7 +100,7 @@ class AveragingManager:
         if pending:
             return {
                 "triggered": False,
-                "message": "An order is pending or unconfirmed.",
+                "message": "Averaging threshold is queued until the pending order is confirmed.",
             }
 
         try:
@@ -67,11 +111,12 @@ class AveragingManager:
                 margin=cycle.averaging_margin,
             )
 
-            # آرڈر ریکارڈ بننے کے بعد Flag محفوظ کریں۔
             cycle.averaging_triggered = True
+            threshold_event.status = "SUBMITTED"
+            threshold_event.message = "Averaging order submitted."
             db.commit()
 
-            self._record_event(
+            self._record_order_event(
                 db,
                 cycle,
                 adverse_percent,
@@ -85,7 +130,6 @@ class AveragingManager:
             }
 
         except Exception as error:
-            # اگر آرڈر کا ریکارڈ بن چکا ہے تو دوبارہ آرڈر نہیں لگے گا۔
             db.rollback()
 
             saved_entry = (
@@ -97,11 +141,24 @@ class AveragingManager:
                 .first()
             )
 
+            threshold_event = (
+                db.query(CycleEvent)
+                .filter(CycleEvent.idempotency_key == threshold_key)
+                .first()
+            )
+
             if saved_entry:
                 cycle.averaging_triggered = True
+
+                if threshold_event:
+                    threshold_event.status = "UNKNOWN"
+                    threshold_event.message = (
+                        "Averaging order exists but its exchange status is uncertain."
+                    )
+
                 db.commit()
 
-                self._record_event(
+                self._record_order_event(
                     db,
                     cycle,
                     adverse_percent,
@@ -114,13 +171,18 @@ class AveragingManager:
                     "message": "Averaging order status is unknown. Reconciliation required.",
                 }
 
+            if threshold_event:
+                threshold_event.status = "ERROR"
+                threshold_event.message = str(error)
+                db.commit()
+
             return {
                 "triggered": False,
                 "message": f"Averaging was not submitted: {error}",
             }
 
     @staticmethod
-    def _record_event(db, cycle, adverse_percent, status, message):
+    def _record_order_event(db, cycle, adverse_percent, status, message):
         key = f"cycle-{cycle.id}-averaging-order"
 
         existing = (
