@@ -1,14 +1,11 @@
+
 from config import settings
-from models import TradingCycle, CycleEvent, CycleOrder
+from models import TradingCycle, CycleEvent, CycleOrder, CycleEntry
 from automated_entry_manager import automated_entry_manager
 from settings_manager import settings_manager
 
 
-OPEN_ORDER_STATUSES = [
-    "PENDING",
-    "PARTIALLY_FILLED",
-    "UNKNOWN",
-]
+OPEN_ORDER_STATUSES = ["PENDING", "PARTIALLY_FILLED", "UNKNOWN"]
 
 ACTIVE_CYCLE_STATUSES = [
     "ACTIVE",
@@ -21,13 +18,10 @@ class OppositePositionManager:
 
     @staticmethod
     def _direction_enabled(symbol_settings, direction):
-
         if direction == "LONG":
             return bool(symbol_settings["enabled_long"])
-
         if direction == "SHORT":
             return bool(symbol_settings["enabled_short"])
-
         return False
 
     def process_cycle(self, db, cycle, adverse_percent):
@@ -40,9 +34,6 @@ class OppositePositionManager:
                 "triggered": False,
                 "message": "Opposite position already triggered.",
             }
-
-        if adverse_percent < cycle.opposite_percent:
-            return {"triggered": False}
 
         pending = (
             db.query(CycleOrder)
@@ -59,42 +50,32 @@ class OppositePositionManager:
                 "message": "An order is pending or unconfirmed.",
             }
 
+        if adverse_percent < cycle.opposite_percent:
+            return {"triggered": False}
+
         opposite_direction = (
             "SHORT" if cycle.direction == "LONG" else "LONG"
         )
 
-        # موجودہ کوائن کی تازہ Settings حاصل کریں۔
         symbol_settings = settings_manager.get_symbol_settings(
-            db,
-            cycle.symbol,
+            db, cycle.symbol
         )
 
-        # جس سمت کی اجازت بند ہو، اس میں انٹری نہیں ہوگی۔
         if not self._direction_enabled(
-            symbol_settings,
-            opposite_direction,
+            symbol_settings, opposite_direction
         ):
-
             cycle.opposite_triggered = True
             db.commit()
 
             self._record_event(
-                db,
-                cycle,
-                adverse_percent,
-                "OPPOSITE_SKIPPED",
-                "SKIPPED",
-                (
-                    f"{opposite_direction} trading is disabled "
-                    "in the current symbol settings."
-                ),
+                db, cycle, adverse_percent,
+                "OPPOSITE_SKIPPED", "SKIPPED",
+                f"{opposite_direction} trading is disabled.",
             )
 
             return {
                 "triggered": False,
-                "message": (
-                    f"{opposite_direction} trading is disabled."
-                ),
+                "message": f"{opposite_direction} trading is disabled.",
             }
 
         existing = (
@@ -108,17 +89,13 @@ class OppositePositionManager:
         )
 
         if existing:
-
             cycle.opposite_triggered = True
             cycle.opposite_cycle_id = existing.id
             db.commit()
 
             self._record_event(
-                db,
-                cycle,
-                adverse_percent,
-                "OPPOSITE_SKIPPED",
-                "SKIPPED",
+                db, cycle, adverse_percent,
+                "OPPOSITE_SKIPPED", "SKIPPED",
                 "An opposite-direction cycle already exists.",
             )
 
@@ -138,17 +115,13 @@ class OppositePositionManager:
         )
 
         if active_count >= settings.MAX_ACTIVE_CYCLES_PER_SYMBOL:
-
             cycle.opposite_triggered = True
             db.commit()
 
             self._record_event(
-                db,
-                cycle,
-                adverse_percent,
-                "OPPOSITE_SKIPPED",
-                "SKIPPED",
-                "Maximum active cycles limit reached for this symbol.",
+                db, cycle, adverse_percent,
+                "OPPOSITE_SKIPPED", "SKIPPED",
+                "Maximum active cycles limit reached.",
             )
 
             return {
@@ -156,22 +129,16 @@ class OppositePositionManager:
                 "message": "Maximum active cycles limit reached.",
             }
 
-        # نئی Cycle میں موجودہ کوائن کی Settings محفوظ کریں۔
         opposite_cycle = TradingCycle(
             symbol=cycle.symbol,
             direction=opposite_direction,
             status="ACTIVE",
-
-            # مخالف سمت کی پہلی انٹری Opposite Margin سے ہوگی۔
             initial_margin=symbol_settings["opposite_margin"],
             averaging_margin=symbol_settings["averaging_margin"],
             opposite_margin=symbol_settings["opposite_margin"],
-
             leverage=symbol_settings["leverage"],
-
             tp_percent=symbol_settings["tp_percent"],
             sl_percent=symbol_settings["sl_percent"],
-
             warning_percent=symbol_settings["warning_percent"],
             opposite_percent=symbol_settings["opposite_percent"],
             averaging_percent=symbol_settings["averaging_percent"],
@@ -187,7 +154,6 @@ class OppositePositionManager:
         db.commit()
 
         try:
-
             result = automated_entry_manager.place_entry(
                 db=db,
                 cycle=opposite_cycle,
@@ -196,9 +162,7 @@ class OppositePositionManager:
             )
 
             self._record_event(
-                db,
-                cycle,
-                adverse_percent,
+                db, cycle, adverse_percent,
                 "OPPOSITE_ORDER",
                 result.get("status", "SUBMITTED"),
                 f"Opposite {opposite_direction} cycle created.",
@@ -210,8 +174,7 @@ class OppositePositionManager:
                 "result": result,
             }
 
-        except Exception:
-
+        except Exception as error:
             db.rollback()
 
             saved_cycle = (
@@ -220,29 +183,61 @@ class OppositePositionManager:
                 .first()
             )
 
+            saved_order = (
+                db.query(CycleOrder)
+                .filter(CycleOrder.cycle_id == opposite_cycle.id)
+                .first()
+            )
+
+            saved_entry = (
+                db.query(CycleEntry)
+                .filter(CycleEntry.cycle_id == opposite_cycle.id)
+                .first()
+            )
+
+            # اگر ریکارڈ موجود ہے تو Exchange تک درخواست پہنچنے
+            # کا امکان ہے۔ ایسی صورت میں دوبارہ آرڈر نہیں بھیجنا۔
+            exchange_request_may_exist = bool(
+                saved_order or saved_entry
+            )
+
+            event_status = (
+                "UNKNOWN"
+                if exchange_request_may_exist
+                else "FAILED_PRECHECK"
+            )
+
             if saved_cycle:
-                saved_cycle.status = "ORDER_UNCONFIRMED"
+                saved_cycle.status = (
+                    "ORDER_UNCONFIRMED"
+                    if exchange_request_may_exist
+                    else "ENTRY_FAILED"
+                )
                 db.commit()
 
+            event_message = (
+                "Opposite order could not be confirmed. "
+                "Reconciliation is required."
+                if exchange_request_may_exist
+                else (
+                    "Opposite entry failed before an exchange "
+                    "order record was created. No order was retried."
+                )
+            )
+
             self._record_event(
-                db,
-                cycle,
-                adverse_percent,
+                db, cycle, adverse_percent,
                 "OPPOSITE_ORDER",
-                "UNKNOWN",
-                (
-                    "Opposite order could not be confirmed. "
-                    "Reconciliation required."
-                ),
+                event_status,
+                event_message,
             )
 
             return {
                 "triggered": False,
                 "opposite_cycle_id": opposite_cycle.id,
-                "message": (
-                    "Opposite order status is unknown. "
-                    "Reconciliation required."
-                ),
+                "status": event_status,
+                "message": event_message,
+                "error": str(error),
             }
 
     @staticmethod
