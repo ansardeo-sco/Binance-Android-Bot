@@ -1,15 +1,12 @@
-
 import logging
 from datetime import datetime, timezone
 
 from config import settings
-from models import (
-    ReentryRecord,
-    TradingCycle,
-)
+from models import ReentryRecord, TradingCycle
 
 from binance_client import binance_client
 from order_manager import order_manager
+from settings_manager import settings_manager
 
 
 logger = logging.getLogger(__name__)
@@ -23,13 +20,22 @@ class ReentryManager:
         "ORDER_UNCONFIRMED",
     ]
 
+    @staticmethod
+    def _direction_enabled(symbol_settings, direction):
+
+        if direction == "LONG":
+            return bool(symbol_settings["enabled_long"])
+
+        if direction == "SHORT":
+            return bool(symbol_settings["enabled_short"])
+
+        return False
+
     async def process_waiting(self, db):
 
         records = (
             db.query(ReentryRecord)
-            .filter(
-                ReentryRecord.status == "WAITING"
-            )
+            .filter(ReentryRecord.status == "WAITING")
             .order_by(ReentryRecord.id.asc())
             .all()
         )
@@ -45,27 +51,19 @@ class ReentryManager:
 
                 old_cycle = (
                     db.query(TradingCycle)
-                    .filter(
-                        TradingCycle.id == record.cycle_id
-                    )
+                    .filter(TradingCycle.id == record.cycle_id)
                     .first()
                 )
 
-                if (
-                    not old_cycle
-                    or old_cycle.status != "CLOSED"
-                ):
+                if not old_cycle or old_cycle.status != "CLOSED":
                     continue
 
-                # اسی سمت میں پہلے سے فعال Cycle ہو تو انتظار کریں۔
                 existing_same_direction = (
                     db.query(TradingCycle)
                     .filter(
                         TradingCycle.symbol == record.symbol,
                         TradingCycle.direction == record.direction,
-                        TradingCycle.status.in_(
-                            self.ACTIVE_STATUSES
-                        ),
+                        TradingCycle.status.in_(self.ACTIVE_STATUSES),
                     )
                     .first()
                 )
@@ -73,26 +71,29 @@ class ReentryManager:
                 if existing_same_direction:
                     continue
 
-                # ایک Coin پر مقررہ حد سے زیادہ فعال Cycles نہ ہوں۔
                 active_count = (
                     db.query(TradingCycle)
                     .filter(
                         TradingCycle.symbol == record.symbol,
-                        TradingCycle.status.in_(
-                            self.ACTIVE_STATUSES
-                        ),
+                        TradingCycle.status.in_(self.ACTIVE_STATUSES),
                     )
                     .count()
                 )
 
-                if (
-                    active_count
-                    >= settings.MAX_ACTIVE_CYCLES_PER_SYMBOL
+                if active_count >= settings.MAX_ACTIVE_CYCLES_PER_SYMBOL:
+                    continue
+
+                # نئی Re-entry کے لیے موجودہ کوائن کی سیٹنگز حاصل کریں۔
+                symbol_settings = settings_manager.get_symbol_settings(
+                    db,
+                    record.symbol,
+                )
+
+                # اگر اس سمت کی اجازت بند ہے تو Re-entry انتظار کرے گی۔
+                if not self._direction_enabled(
+                    symbol_settings,
+                    record.direction,
                 ):
-                    logger.info(
-                        "Re-entry waiting for %s: active cycle limit reached.",
-                        record.symbol,
-                    )
                     continue
 
                 price = await binance_client.get_market_price(
@@ -103,19 +104,12 @@ class ReentryManager:
                     continue
 
                 if record.direction == "LONG":
-
-                    reached = (
-                        price <= record.trigger_price
-                    )
+                    reached = price <= record.trigger_price
 
                 elif record.direction == "SHORT":
-
-                    reached = (
-                        price >= record.trigger_price
-                    )
+                    reached = price >= record.trigger_price
 
                 else:
-
                     logger.error(
                         "Invalid re-entry direction: %s",
                         record.direction,
@@ -125,44 +119,43 @@ class ReentryManager:
                 if not reached:
                     continue
 
-                # نئی Cycle موجودہ server configuration استعمال کرے گی۔
+                # Re-entry کو پہلے محفوظ طور پر PROCESSING کریں۔
+                saved_record = (
+                    db.query(ReentryRecord)
+                    .filter(ReentryRecord.id == record_id)
+                    .with_for_update()
+                    .first()
+                )
+
+                if not saved_record or saved_record.status != "WAITING":
+                    db.rollback()
+                    continue
+
                 new_cycle = TradingCycle(
                     symbol=record.symbol,
                     direction=record.direction,
                     status="ACTIVE",
-                    initial_margin=settings.DEFAULT_INITIAL_MARGIN,
-                    averaging_margin=settings.DEFAULT_AVERAGING_MARGIN,
-                    opposite_margin=settings.DEFAULT_OPPOSITE_MARGIN,
-                    leverage=settings.DEFAULT_LEVERAGE,
-                    tp_percent=settings.DEFAULT_TP_PERCENT,
-                    sl_percent=settings.DEFAULT_SL_PERCENT,
-                    warning_percent=settings.DEFAULT_WARNING_PERCENT,
-                    opposite_percent=settings.DEFAULT_OPPOSITE_PERCENT,
-                    averaging_percent=settings.DEFAULT_AVERAGING_PERCENT,
-                    reentry_percent=settings.DEFAULT_REENTRY_PERCENT,
+
+                    # نئی Cycle میں موجودہ Settings محفوظ ہوں گی۔
+                    initial_margin=symbol_settings["initial_margin"],
+                    averaging_margin=symbol_settings["averaging_margin"],
+                    opposite_margin=symbol_settings["opposite_margin"],
+
+                    leverage=symbol_settings["leverage"],
+
+                    tp_percent=symbol_settings["tp_percent"],
+                    sl_percent=symbol_settings["sl_percent"],
+
+                    warning_percent=symbol_settings["warning_percent"],
+                    opposite_percent=symbol_settings["opposite_percent"],
+                    averaging_percent=symbol_settings["averaging_percent"],
+                    reentry_percent=symbol_settings["reentry_percent"],
                 )
 
                 db.add(new_cycle)
                 db.flush()
 
                 new_cycle_id = new_cycle.id
-
-                # پہلے Re-entry کو PROCESSING محفوظ کریں۔
-                saved_record = (
-                    db.query(ReentryRecord)
-                    .filter(
-                        ReentryRecord.id == record_id
-                    )
-                    .with_for_update()
-                    .first()
-                )
-
-                if (
-                    not saved_record
-                    or saved_record.status != "WAITING"
-                ):
-                    db.rollback()
-                    continue
 
                 saved_record.status = "PROCESSING"
                 saved_record.new_cycle_id = new_cycle_id
@@ -178,23 +171,21 @@ class ReentryManager:
 
                     saved_record = (
                         db.query(ReentryRecord)
-                        .filter(
-                            ReentryRecord.id == record_id
-                        )
+                        .filter(ReentryRecord.id == record_id)
                         .first()
                     )
 
                     saved_cycle = (
                         db.query(TradingCycle)
-                        .filter(
-                            TradingCycle.id == new_cycle_id
-                        )
+                        .filter(TradingCycle.id == new_cycle_id)
                         .first()
                     )
 
+                    order_status = result.get("order_status")
+
                     if (
                         result.get("success")
-                        and result.get("order_status") != "UNKNOWN"
+                        and order_status != "UNKNOWN"
                     ):
 
                         if saved_record:
@@ -234,17 +225,13 @@ class ReentryManager:
 
                     saved_record = (
                         db.query(ReentryRecord)
-                        .filter(
-                            ReentryRecord.id == record_id
-                        )
+                        .filter(ReentryRecord.id == record_id)
                         .first()
                     )
 
                     saved_cycle = (
                         db.query(TradingCycle)
-                        .filter(
-                            TradingCycle.id == new_cycle_id
-                        )
+                        .filter(TradingCycle.id == new_cycle_id)
                         .first()
                     )
 
