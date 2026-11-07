@@ -2,6 +2,7 @@ package com.ansardeo.binancebot
 
 import android.os.Bundle
 import android.view.View
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -27,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var txtTotalBalance: TextView
     private lateinit var txtCycleCount: TextView
     private lateinit var txtActivePositions: TextView
+    private lateinit var txtSymbolSettings: TextView
 
     private lateinit var spSymbol: Spinner
     private lateinit var spLeverage: Spinner
@@ -42,7 +44,6 @@ class MainActivity : AppCompatActivity() {
         .writeTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    // سرور تبدیل ہونے پر یہاں اصل VPS API address درج کیا جائے گا۔
     private val backendBaseUrl =
         "https://ansardeo-sco-binance-android-bot.hf.space/api/v1"
 
@@ -67,7 +68,7 @@ class MainActivity : AppCompatActivity() {
         "20x"
     )
 
-    // اس مرحلے میں ٹریڈنگ جان بوجھ کر بند ہے۔
+    // Testnet جانچ مکمل ہونے تک ٹریڈنگ بند رہے گی۔
     private val tradingEnabled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,14 +84,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnSubmitEntry.setOnClickListener {
-            if (!tradingEnabled) {
-                Toast.makeText(
-                    this,
-                    "Trading will be enabled after Testnet testing.",
-                    Toast.LENGTH_LONG
-                ).show()
-                return@setOnClickListener
-            }
+            Toast.makeText(
+                this,
+                "Trading is disabled until Testnet testing is completed.",
+                Toast.LENGTH_LONG
+            ).show()
         }
 
         refreshDashboard()
@@ -104,6 +102,7 @@ class MainActivity : AppCompatActivity() {
         txtTotalBalance = findViewById(R.id.txtTotalBalance)
         txtCycleCount = findViewById(R.id.txtCycleCount)
         txtActivePositions = findViewById(R.id.txtActivePositions)
+        txtSymbolSettings = findViewById(R.id.txtSymbolSettings)
 
         spSymbol = findViewById(R.id.spSymbol)
         spLeverage = findViewById(R.id.spLeverage)
@@ -140,12 +139,34 @@ class MainActivity : AppCompatActivity() {
 
         spLeverage.adapter = leverageAdapter
         spLeverage.setSelection(4)
+
+        spSymbol.onItemSelectedListener =
+            object : AdapterView.OnItemSelectedListener {
+
+                override fun onItemSelected(
+                    parent: AdapterView<*>?,
+                    view: View?,
+                    position: Int,
+                    id: Long
+                ) {
+                    val symbol = symbols[position]
+                    fetchSymbolSettings(symbol)
+                }
+
+                override fun onNothingSelected(
+                    parent: AdapterView<*>?
+                ) {
+                    txtSymbolSettings.text =
+                        "No coin selected."
+                }
+            }
     }
 
     private fun setupDashboard() {
 
         txtStatus.text = "SERVER: CHECKING CONNECTION"
         txtMode.text = "MODE: TESTNET CONFIGURATION"
+
         txtBalance.text = "-- USDT"
         txtTotalBalance.text = "-- USDT"
         txtCycleCount.text = "0"
@@ -165,6 +186,9 @@ class MainActivity : AppCompatActivity() {
 
         txtActivePositions.text =
             "Loading active cycles..."
+
+        txtSymbolSettings.text =
+            "Loading selected coin settings..."
     }
 
     private fun refreshDashboard() {
@@ -174,11 +198,135 @@ class MainActivity : AppCompatActivity() {
 
         fetchAccountBalance()
         fetchActiveCycles()
+
+        if (spSymbol.selectedItem != null) {
+            fetchSymbolSettings(
+                spSymbol.selectedItem.toString()
+            )
+        }
     }
 
     private fun finishRefreshButton() {
         btnRefresh.isEnabled = true
         btnRefresh.text = "REFRESH DASHBOARD"
+    }
+
+    private fun fetchSymbolSettings(symbol: String) {
+
+        txtSymbolSettings.text =
+            "Loading $symbol settings..."
+
+        val request = Request.Builder()
+            .url("$backendBaseUrl/settings/$symbol")
+            .get()
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+
+            override fun onFailure(call: Call, e: IOException) {
+
+                runOnUiThread {
+                    txtSymbolSettings.text =
+                        "Unable to load $symbol settings.\n" +
+                        "Check server connection."
+                }
+            }
+
+            override fun onResponse(
+                call: Call,
+                response: Response
+            ) {
+
+                val responseData = response.body?.string()
+
+                runOnUiThread {
+
+                    if (response.isSuccessful && responseData != null) {
+
+                        try {
+
+                            val json = JSONObject(responseData)
+
+                            val enabledLong =
+                                json.optBoolean("enabled_long", true)
+
+                            val enabledShort =
+                                json.optBoolean("enabled_short", true)
+
+                            val initialMargin =
+                                json.optDouble("initial_margin", 2.0)
+
+                            val averagingMargin =
+                                json.optDouble("averaging_margin", 2.0)
+
+                            val oppositeMargin =
+                                json.optDouble("opposite_margin", 2.0)
+
+                            val leverage =
+                                json.optInt("leverage", 6)
+
+                            val tp =
+                                json.optDouble("tp_percent", 3.0)
+
+                            val sl =
+                                json.optDouble("sl_percent", 12.0)
+
+                            val warning =
+                                json.optDouble("warning_percent", 6.0)
+
+                            val opposite =
+                                json.optDouble("opposite_percent", 7.0)
+
+                            val averaging =
+                                json.optDouble("averaging_percent", 9.0)
+
+                            val reentry =
+                                json.optDouble("reentry_percent", 1.0)
+
+                            // منتخب کوائن کا مارجن اور لیوریج دکھائیں۔
+                            etMargin.setText(
+                                initialMargin.toString()
+                            )
+
+                            val leverageIndex =
+                                leverageOptions.indexOf("${leverage}x")
+
+                            if (leverageIndex >= 0) {
+                                spLeverage.setSelection(leverageIndex)
+                            }
+
+                            val directionText =
+                                "LONG: ${if (enabledLong) "ENABLED" else "DISABLED"}\n" +
+                                "SHORT: ${if (enabledShort) "ENABLED" else "DISABLED"}"
+
+                            txtSymbolSettings.text =
+                                "$symbol SETTINGS\n\n" +
+                                "$directionText\n\n" +
+                                "Initial Margin: $initialMargin USDT\n" +
+                                "Averaging Margin: $averagingMargin USDT\n" +
+                                "Opposite Margin: $oppositeMargin USDT\n" +
+                                "Leverage: ${leverage}x\n\n" +
+                                "Take Profit: $tp%\n" +
+                                "Stop Loss: $sl%\n" +
+                                "Warning: $warning%\n" +
+                                "Opposite Entry: $opposite%\n" +
+                                "Averaging: $averaging%\n" +
+                                "Re-entry: $reentry%"
+
+                        } catch (e: Exception) {
+
+                            txtSymbolSettings.text =
+                                "Invalid settings response."
+                        }
+
+                    } else {
+
+                        txtSymbolSettings.text =
+                            "Settings unavailable for $symbol."
+                    }
+                }
+            }
+        })
     }
 
     private fun fetchAccountBalance() {
@@ -241,7 +389,7 @@ class MainActivity : AppCompatActivity() {
                                 if (testnet) {
                                     "SERVER: CONNECTED"
                                 } else {
-                                    "SERVER: CONNECTED - LIVE MODE DETECTED"
+                                    "SERVER: LIVE MODE DETECTED"
                                 }
 
                         } catch (e: Exception) {
@@ -342,7 +490,7 @@ class MainActivity : AppCompatActivity() {
 
                                     display.append("● ")
                                     display.append(symbol)
-                                    display.append("  |  ")
+                                    display.append(" | ")
                                     display.append(direction)
                                     display.append("\n")
 
