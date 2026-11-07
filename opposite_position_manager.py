@@ -1,5 +1,12 @@
-from models import TradingCycle, CycleEvent, CycleOrder
+from models import TradingCycle, CycleEvent, CycleOrder, CycleEntry
 from automated_entry_manager import automated_entry_manager
+
+
+OPEN_ORDER_STATUSES = [
+    "PENDING",
+    "PARTIALLY_FILLED",
+    "UNKNOWN",
+]
 
 
 class OppositePositionManager:
@@ -22,11 +29,7 @@ class OppositePositionManager:
             db.query(CycleOrder)
             .filter(
                 CycleOrder.cycle_id == cycle.id,
-                CycleOrder.status.in_([
-                    "PENDING",
-                    "PARTIALLY_FILLED",
-                    "UNKNOWN",
-                ]),
+                CycleOrder.status.in_(OPEN_ORDER_STATUSES),
             )
             .first()
         )
@@ -60,19 +63,14 @@ class OppositePositionManager:
             cycle.opposite_cycle_id = existing.id
             db.commit()
 
-            event = CycleEvent(
-                cycle_id=cycle.id,
-                symbol=cycle.symbol,
-                event_type="OPPOSITE_SKIPPED",
-                price=cycle.average_entry_price,
-                percentage=adverse_percent,
-                status="SKIPPED",
-                message="An opposite-direction cycle already exists.",
-                idempotency_key=f"cycle-{cycle.id}-opposite-skipped",
+            self._record_event(
+                db,
+                cycle,
+                adverse_percent,
+                "OPPOSITE_SKIPPED",
+                "SKIPPED",
+                "An opposite-direction cycle already exists.",
             )
-
-            db.add(event)
-            db.commit()
 
             return {
                 "triggered": False,
@@ -80,7 +78,7 @@ class OppositePositionManager:
                 "opposite_cycle_id": existing.id,
             }
 
-        # نئے Cycle میں موجودہ Cycle کی Settings کی نقل۔
+        # نئی مخالف سمت کی Cycle میں پرانی Cycle کی Settings محفوظ کریں۔
         opposite_cycle = TradingCycle(
             symbol=cycle.symbol,
             direction=opposite_direction,
@@ -101,39 +99,99 @@ class OppositePositionManager:
         db.commit()
         db.refresh(opposite_cycle)
 
-        # اصل Cycle میں بھی ریکارڈ محفوظ کریں۔
+        # اصل Cycle میں بھی اس کوشش کا مستقل ریکارڈ رکھیں۔
         cycle.opposite_triggered = True
         cycle.opposite_cycle_id = opposite_cycle.id
         db.commit()
 
-        result = automated_entry_manager.place_entry(
-            db=db,
-            cycle=opposite_cycle,
-            entry_type="OPPOSITE",
-            margin=cycle.opposite_margin,
+        try:
+            result = automated_entry_manager.place_entry(
+                db=db,
+                cycle=opposite_cycle,
+                entry_type="OPPOSITE",
+                margin=cycle.opposite_margin,
+            )
+
+            self._record_event(
+                db,
+                cycle,
+                adverse_percent,
+                "OPPOSITE_ORDER",
+                result.get("status", "SUBMITTED"),
+                f"Opposite {opposite_direction} cycle created.",
+            )
+
+            return {
+                "triggered": True,
+                "opposite_cycle_id": opposite_cycle.id,
+                "result": result,
+            }
+
+        except Exception:
+            db.rollback()
+
+            # ناکامی یا غیر یقینی صورت میں خالی Cycle کو ACTIVE نہ چھوڑیں۔
+            saved_cycle = (
+                db.query(TradingCycle)
+                .filter(TradingCycle.id == opposite_cycle.id)
+                .first()
+            )
+
+            if saved_cycle:
+                saved_cycle.status = "ORDER_UNCONFIRMED"
+                db.commit()
+
+            self._record_event(
+                db,
+                cycle,
+                adverse_percent,
+                "OPPOSITE_ORDER",
+                "UNKNOWN",
+                "Opposite order could not be confirmed. Reconciliation required.",
+            )
+
+            return {
+                "triggered": False,
+                "opposite_cycle_id": opposite_cycle.id,
+                "message": "Opposite order status is unknown. Reconciliation required.",
+            }
+
+    @staticmethod
+    def _record_event(
+        db,
+        cycle,
+        adverse_percent,
+        event_type,
+        status,
+        message,
+    ):
+        if event_type == "OPPOSITE_SKIPPED":
+            key = f"cycle-{cycle.id}-opposite-skipped"
+        else:
+            key = f"cycle-{cycle.id}-opposite-order"
+
+        existing = (
+            db.query(CycleEvent)
+            .filter(CycleEvent.idempotency_key == key)
+            .first()
         )
+
+        if existing:
+            return
 
         event = CycleEvent(
             cycle_id=cycle.id,
             symbol=cycle.symbol,
-            event_type="OPPOSITE_ORDER",
+            event_type=event_type,
             price=cycle.average_entry_price,
             percentage=adverse_percent,
-            status=result["status"],
-            message=(
-                f"Opposite {opposite_direction} cycle created."
-            ),
-            idempotency_key=f"cycle-{cycle.id}-opposite-order",
+            status=status,
+            message=message,
+            idempotency_key=key,
         )
 
         db.add(event)
         db.commit()
-
-        return {
-            "triggered": True,
-            "opposite_cycle_id": opposite_cycle.id,
-            "result": result,
-        }
 
 
 opposite_position_manager = OppositePositionManager()
