@@ -19,6 +19,7 @@ class OrderManager:
         db: Session,
         cycle,
     ):
+
         validated = risk_manager.validate_initial_entry(
             symbol=cycle.symbol,
             direction=cycle.direction,
@@ -27,14 +28,21 @@ class OrderManager:
         )
 
         if not settings.BINANCE_API_KEY or not settings.BINANCE_API_SECRET:
-            raise RuntimeError("Binance API credentials are missing.")
+            raise RuntimeError(
+                "Binance API credentials are missing."
+            )
 
         exchange = binance_client.exchange
         symbol = validated["symbol"]
 
         binance_client._load_markets_sync()
 
-        market_price = binance_client._fetch_mark_price_sync(symbol)
+        market_price = binance_client._fetch_mark_price_sync(
+            symbol
+        )
+
+        if not market_price or market_price <= 0:
+            raise ValueError("Invalid market price.")
 
         market = exchange.market(symbol)
 
@@ -43,20 +51,30 @@ class OrderManager:
         ) / market_price
 
         quantity = float(
-            exchange.amount_to_precision(symbol, raw_quantity)
+            exchange.amount_to_precision(
+                symbol,
+                raw_quantity,
+            )
         )
 
         if quantity <= 0:
-            raise ValueError("Calculated order quantity is zero.")
-
-        min_amount = (market.get("limits") or {}).get(
-            "amount", {}
-        ).get("min")
-
-        if min_amount is not None and quantity < float(min_amount):
             raise ValueError(
-                f"Order quantity {quantity} is below minimum "
-                f"quantity {min_amount}."
+                "Calculated order quantity is zero."
+            )
+
+        min_amount = (
+            (market.get("limits") or {})
+            .get("amount", {})
+            .get("min")
+        )
+
+        if (
+            min_amount is not None
+            and quantity < float(min_amount)
+        ):
+            raise ValueError(
+                f"Order quantity {quantity} is below "
+                f"minimum quantity {min_amount}."
             )
 
         client_order_id = (
@@ -99,10 +117,14 @@ class OrderManager:
         db.flush()
 
         order_record.entry_id = entry.id
+
         db.add(order_record)
+
+        # Exchange کو درخواست بھیجنے سے پہلے ریکارڈ محفوظ کریں۔
         db.commit()
 
         try:
+
             exchange.set_margin_mode(
                 "isolated",
                 symbol,
@@ -113,16 +135,16 @@ class OrderManager:
                 symbol,
             )
 
-            params = {
-                "positionSide": validated["direction"],
-                "newClientOrderId": client_order_id,
-            }
-
             side = (
                 "buy"
                 if validated["direction"] == "LONG"
                 else "sell"
             )
+
+            params = {
+                "positionSide": validated["direction"],
+                "newClientOrderId": client_order_id,
+            }
 
             result = exchange.create_order(
                 symbol=symbol,
@@ -133,14 +155,25 @@ class OrderManager:
             )
 
             order_id = result.get("id")
-            filled = float(result.get("filled") or 0)
+
+            filled = float(
+                result.get("filled") or 0
+            )
+
             average_price = result.get("average")
 
             if order_id:
-                order_record.exchange_order_id = str(order_id)
-                entry.exchange_order_id = str(order_id)
+
+                order_record.exchange_order_id = str(
+                    order_id
+                )
+
+                entry.exchange_order_id = str(
+                    order_id
+                )
 
                 try:
+
                     confirmed = exchange.fetch_order(
                         order_id,
                         symbol,
@@ -151,19 +184,23 @@ class OrderManager:
                     )
 
                     average_price = (
-                        confirmed.get("average") or average_price
+                        confirmed.get("average")
+                        or average_price
                     )
 
                     result = confirmed
 
                 except Exception as fetch_error:
+
                     logger.warning(
-                        "Order placed but confirmation fetch failed: %s",
+                        "Order placed but confirmation "
+                        "fetch failed: %s",
                         fetch_error,
                     )
 
             entry.filled_quantity = filled
             entry.remaining_quantity = filled
+
             entry.entry_price = (
                 float(average_price)
                 if average_price
@@ -171,6 +208,7 @@ class OrderManager:
             )
 
             order_record.filled_quantity = filled
+
             order_record.average_fill_price = (
                 float(average_price)
                 if average_price
@@ -182,14 +220,17 @@ class OrderManager:
             ).lower()
 
             if exchange_status == "closed":
+
                 entry.status = "FILLED"
                 order_record.status = "FILLED"
 
             elif filled > 0:
+
                 entry.status = "PARTIALLY_FILLED"
                 order_record.status = "PARTIALLY_FILLED"
 
             else:
+
                 entry.status = "PENDING"
                 order_record.status = "PENDING"
 
@@ -212,12 +253,18 @@ class OrderManager:
             }
 
         except Exception as error:
+
+            # درخواست Exchange تک پہنچ چکی ہو سکتی ہے۔
+            # اس لیے اسے ERROR نہیں بلکہ UNKNOWN رکھیں۔
+            # دوبارہ آرڈر لگانے سے پہلے Exchange history چیک کرنا ضروری ہے۔
+
             db.rollback()
 
             entry = (
                 db.query(CycleEntry)
                 .filter(
-                    CycleEntry.client_order_id == client_order_id
+                    CycleEntry.client_order_id
+                    == client_order_id
                 )
                 .first()
             )
@@ -225,25 +272,29 @@ class OrderManager:
             order_record = (
                 db.query(CycleOrder)
                 .filter(
-                    CycleOrder.client_order_id == client_order_id
+                    CycleOrder.client_order_id
+                    == client_order_id
                 )
                 .first()
             )
 
             if entry:
-                entry.status = "ERROR"
+                entry.status = "UNKNOWN"
 
             if order_record:
-                order_record.status = "ERROR"
+                order_record.status = "UNKNOWN"
                 order_record.error_message = str(error)
 
             db.commit()
 
-            logger.exception("Initial order failed")
+            logger.exception(
+                "Initial order could not be confirmed."
+            )
 
             raise RuntimeError(
-                "Initial order failed or could not be confirmed. "
-                "Check Binance order history before trying again. "
+                "Initial order status is UNKNOWN. "
+                "Check Binance Testnet order history "
+                "before trying again. "
                 f"Details: {error}"
             ) from error
 
