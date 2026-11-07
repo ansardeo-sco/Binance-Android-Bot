@@ -38,6 +38,14 @@ class ReconciliationManager:
 
     def sync_positions(self):
 
+        # Production account کی پوزیشنز یہاں بھی نہیں پڑھی جائیں گی۔
+        settings.validate_trading_mode()
+
+        if not settings.BINANCE_USE_TESTNET:
+            raise RuntimeError(
+                "Position reconciliation is restricted to Testnet."
+            )
+
         db = SessionLocal()
 
         try:
@@ -71,7 +79,6 @@ class ReconciliationManager:
                 .all()
             )
 
-            # Exchange response کامیاب ہونے کے بعد ہی پرانا snapshot reset کریں۔
             for record in existing_records:
 
                 record.exchange_quantity = 0.0
@@ -202,6 +209,7 @@ class ReconciliationManager:
                 "positions_synced": len(synced),
                 "positions": synced,
                 "synced_at": now.isoformat(),
+                "trading_mode": "TESTNET",
             }
 
         except Exception:
