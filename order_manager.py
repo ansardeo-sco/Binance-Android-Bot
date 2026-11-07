@@ -1,3 +1,4 @@
+
 import logging
 import uuid
 
@@ -11,14 +12,12 @@ from risk_manager import risk_manager
 
 logger = logging.getLogger(__name__)
 
+EPSILON = 0.00000001
+
 
 class OrderManager:
 
-    def place_initial_entry(
-        self,
-        db: Session,
-        cycle,
-    ):
+    def place_initial_entry(self, db: Session, cycle):
 
         validated = risk_manager.validate_initial_entry(
             symbol=cycle.symbol,
@@ -27,7 +26,10 @@ class OrderManager:
             leverage=cycle.leverage,
         )
 
-        if not settings.BINANCE_API_KEY or not settings.BINANCE_API_SECRET:
+        if (
+            not settings.BINANCE_API_KEY
+            or not settings.BINANCE_API_SECRET
+        ):
             raise RuntimeError(
                 "Binance API credentials are missing."
             )
@@ -37,6 +39,10 @@ class OrderManager:
 
         binance_client._load_markets_sync()
 
+        exchange_symbol = binance_client.get_exchange_symbol(
+            symbol
+        )
+
         market_price = binance_client._fetch_mark_price_sync(
             symbol
         )
@@ -44,7 +50,7 @@ class OrderManager:
         if not market_price or market_price <= 0:
             raise ValueError("Invalid market price.")
 
-        market = exchange.market(symbol)
+        market = exchange.market(exchange_symbol)
 
         raw_quantity = (
             validated["margin"] * validated["leverage"]
@@ -52,7 +58,7 @@ class OrderManager:
 
         quantity = float(
             exchange.amount_to_precision(
-                symbol,
+                exchange_symbol,
                 raw_quantity,
             )
         )
@@ -120,19 +126,19 @@ class OrderManager:
 
         db.add(order_record)
 
-        # Exchange کو درخواست بھیجنے سے پہلے ریکارڈ محفوظ کریں۔
+        # Exchange request سے پہلے دونوں ریکارڈ محفوظ کریں۔
         db.commit()
 
         try:
 
             exchange.set_margin_mode(
                 "isolated",
-                symbol,
+                exchange_symbol,
             )
 
             exchange.set_leverage(
                 validated["leverage"],
-                symbol,
+                exchange_symbol,
             )
 
             side = (
@@ -147,7 +153,7 @@ class OrderManager:
             }
 
             result = exchange.create_order(
-                symbol=symbol,
+                symbol=exchange_symbol,
                 type="market",
                 side=side,
                 amount=quantity,
@@ -164,19 +170,14 @@ class OrderManager:
 
             if order_id:
 
-                order_record.exchange_order_id = str(
-                    order_id
-                )
-
-                entry.exchange_order_id = str(
-                    order_id
-                )
+                order_record.exchange_order_id = str(order_id)
+                entry.exchange_order_id = str(order_id)
 
                 try:
 
                     confirmed = exchange.fetch_order(
                         order_id,
-                        symbol,
+                        exchange_symbol,
                     )
 
                     filled = float(
@@ -203,7 +204,7 @@ class OrderManager:
 
             entry.entry_price = (
                 float(average_price)
-                if average_price
+                if average_price is not None
                 else None
             )
 
@@ -211,7 +212,7 @@ class OrderManager:
 
             order_record.average_fill_price = (
                 float(average_price)
-                if average_price
+                if average_price is not None
                 else None
             )
 
@@ -219,10 +220,33 @@ class OrderManager:
                 result.get("status") or "open"
             ).lower()
 
-            if exchange_status == "closed":
+            is_terminal = exchange_status in (
+                "closed",
+                "canceled",
+                "cancelled",
+                "expired",
+                "rejected",
+            )
+
+            is_fully_filled = (
+                quantity > 0
+                and filled + EPSILON >= quantity
+            )
+
+            if is_terminal and is_fully_filled:
 
                 entry.status = "FILLED"
                 order_record.status = "FILLED"
+
+            elif is_terminal and filled > 0:
+
+                entry.status = "PARTIALLY_FILLED"
+                order_record.status = "CANCELLED_PARTIAL"
+
+            elif is_terminal:
+
+                entry.status = "CANCELLED"
+                order_record.status = "CANCELLED"
 
             elif filled > 0:
 
@@ -253,10 +277,6 @@ class OrderManager:
             }
 
         except Exception as error:
-
-            # درخواست Exchange تک پہنچ چکی ہو سکتی ہے۔
-            # اس لیے اسے ERROR نہیں بلکہ UNKNOWN رکھیں۔
-            # دوبارہ آرڈر لگانے سے پہلے Exchange history چیک کرنا ضروری ہے۔
 
             db.rollback()
 
