@@ -1,11 +1,10 @@
 import logging
 import uuid
 import threading
-from datetime import datetime, timezone
 
 from config import settings
 from binance_client import binance_client
-from models import CycleEntry, CycleOrder, TradingCycle
+from models import CycleEntry, CycleOrder
 
 
 logger = logging.getLogger(__name__)
@@ -16,25 +15,17 @@ class CloseOrderManager:
     def __init__(self):
         self._lock = threading.RLock()
 
-    def close_entry(
-        self,
-        db,
-        entry_id: int,
-        reason: str = "MANUAL_CLOSE",
-    ):
+    def close_entry(self, db, entry_id: int, reason="MANUAL_CLOSE"):
+
         with self._lock:
 
             if not settings.BINANCE_USE_TESTNET:
-                raise RuntimeError(
-                    "Closing orders are restricted to Testnet."
-                )
+                raise RuntimeError("Closing orders are restricted to Testnet.")
 
             settings.validate_trading_mode()
 
             if not settings.BINANCE_API_KEY or not settings.BINANCE_API_SECRET:
-                raise RuntimeError(
-                    "Binance API credentials are missing."
-                )
+                raise RuntimeError("Binance API credentials are missing.")
 
             entry = (
                 db.query(CycleEntry)
@@ -103,9 +94,7 @@ class CloseOrderManager:
                     raw_amount = info.get("positionAmt")
 
                     if raw_amount is not None:
-                        exchange_quantity = abs(
-                            float(raw_amount)
-                        )
+                        exchange_quantity = abs(float(raw_amount))
                     else:
                         exchange_quantity = abs(
                             float(position.get("contracts") or 0)
@@ -116,13 +105,10 @@ class CloseOrderManager:
             if exchange_quantity <= 0:
                 raise RuntimeError(
                     "No matching exchange position found. "
-                    "Reconcile positions before closing this entry."
+                    "Reconcile positions before closing."
                 )
 
-            close_quantity = min(
-                remaining,
-                exchange_quantity,
-            )
+            close_quantity = min(remaining, exchange_quantity)
 
             close_quantity = float(
                 exchange.amount_to_precision(
@@ -132,18 +118,12 @@ class CloseOrderManager:
             )
 
             if close_quantity <= 0:
-                raise ValueError(
-                    "Closing quantity is zero after precision adjustment."
-                )
+                raise ValueError("Closing quantity is zero.")
 
-            client_order_id = (
-                "close_" + uuid.uuid4().hex[:24]
-            )
+            client_order_id = "close_" + uuid.uuid4().hex[:24]
 
             close_side = (
-                "sell"
-                if entry.direction == "LONG"
-                else "buy"
+                "sell" if entry.direction == "LONG" else "buy"
             )
 
             order_record = CycleOrder(
@@ -164,76 +144,50 @@ class CloseOrderManager:
             db.refresh(order_record)
 
             try:
-                params = {
-                    "positionSide": entry.direction,
-                    "newClientOrderId": client_order_id,
-                }
-
                 result = exchange.create_order(
                     symbol=entry.symbol,
                     type="market",
                     side=close_side,
                     amount=close_quantity,
-                    params=params,
+                    params={
+                        "positionSide": entry.direction,
+                        "newClientOrderId": client_order_id,
+                    },
                 )
 
                 order_id = result.get("id")
-
-                filled = float(
-                    result.get("filled") or 0
-                )
-
-                average = result.get("average")
 
                 order_record.exchange_order_id = (
                     str(order_id) if order_id else None
                 )
 
-                order_record.filled_quantity = filled
+                # Filled quantity is updated only by order_status_manager.
+                # This prevents the same fill being deducted twice.
+                order_record.status = (
+                    "PENDING" if order_id else "UNKNOWN"
+                )
 
-                if average is not None:
-                    order_record.average_fill_price = float(average)
-
-                exchange_status = str(
-                    result.get("status") or "open"
-                ).lower()
-
-                if exchange_status == "closed":
-                    order_record.status = (
-                        "FILLED" if filled > 0 else "CANCELLED"
+                if not order_id:
+                    order_record.error_message = (
+                        "Exchange response did not contain an order ID. "
+                        "Manual exchange verification is required."
                     )
-
-                elif filled > 0:
-                    order_record.status = "PARTIALLY_FILLED"
-
-                else:
-                    order_record.status = (
-                        "PENDING" if order_id else "UNKNOWN"
-                    )
-
-                if filled > 0:
-                    entry.remaining_quantity = max(
-                        0.0,
-                        remaining - filled,
-                    )
-
-                    if entry.remaining_quantity <= 0.00000001:
-                        entry.remaining_quantity = 0.0
-                        entry.status = "CLOSED"
-                        entry.closed_at = datetime.now(timezone.utc)
 
                 db.commit()
 
                 return {
-                    "success": True,
+                    "success": bool(order_id),
                     "entry_id": entry.id,
                     "order_id": order_record.id,
                     "exchange_order_id": order_id,
                     "reason": reason,
                     "requested_quantity": close_quantity,
-                    "filled_quantity": filled,
-                    "remaining_quantity": entry.remaining_quantity,
                     "status": order_record.status,
+                    "message": (
+                        "Close order submitted. Fill confirmation is pending."
+                        if order_id
+                        else "Order response is uncertain. Do not retry."
+                    ),
                 }
 
             except Exception as error:
@@ -252,14 +206,11 @@ class CloseOrderManager:
                     saved_order.error_message = str(error)
                     db.commit()
 
-                logger.exception(
-                    "Closing order could not be confirmed."
-                )
+                logger.exception("Closing order confirmation failed.")
 
                 raise RuntimeError(
                     "Closing order status is unknown. "
-                    "Do not submit another close order until "
-                    "Binance order history and positions are checked."
+                    "Check Binance order history before any retry."
                 ) from error
 
 
