@@ -2,7 +2,7 @@
 import logging
 import math
 
-from models import CycleEntry
+from models import CycleEntry, CycleOrder
 from close_order_manager import close_order_manager
 
 
@@ -13,17 +13,13 @@ EPSILON = 0.00000001
 
 class StopLossManager:
 
-    def process_cycle(
-        self,
-        db,
-        cycle,
-        current_price: float,
-    ):
+    def process_cycle(self, db, cycle, current_price: float):
 
         if cycle.status != "ACTIVE":
             return {
                 "processed": False,
                 "message": "Cycle is not active.",
+                "triggered_entries": 0,
             }
 
         try:
@@ -32,15 +28,40 @@ class StopLossManager:
             return {
                 "processed": False,
                 "message": "Invalid market price.",
+                "triggered_entries": 0,
             }
 
-        if (
-            not math.isfinite(current_price)
-            or current_price <= 0
-        ):
+        if not math.isfinite(current_price) or current_price <= 0:
             return {
                 "processed": False,
                 "message": "Invalid market price.",
+                "triggered_entries": 0,
+            }
+
+        pending_entry_order = (
+            db.query(CycleOrder)
+            .filter(
+                CycleOrder.cycle_id == cycle.id,
+                CycleOrder.reduce_position.is_(False),
+                CycleOrder.status.in_([
+                    "PENDING",
+                    "PARTIALLY_FILLED",
+                    "UNKNOWN",
+                ]),
+            )
+            .first()
+        )
+
+        if pending_entry_order:
+            return {
+                "processed": False,
+                "blocked": True,
+                "triggered_entries": 0,
+                "pending_order_id": pending_entry_order.id,
+                "message": (
+                    "Stop-loss is waiting for the opening order "
+                    "to be reconciled."
+                ),
             }
 
         entries = (
@@ -60,13 +81,11 @@ class StopLossManager:
         results = []
 
         for entry in entries:
-
             try:
                 entry_price = float(entry.entry_price or 0)
                 stop_percent = float(
                     entry.stop_loss_percent or 0
                 )
-
                 remaining = float(
                     entry.remaining_quantity or 0
                 )
@@ -85,7 +104,6 @@ class StopLossManager:
                 ).upper()
 
                 if direction == "LONG":
-
                     loss_percent = (
                         (entry_price - current_price)
                         / entry_price
@@ -96,7 +114,6 @@ class StopLossManager:
                     )
 
                 elif direction == "SHORT":
-
                     loss_percent = (
                         (current_price - entry_price)
                         / entry_price
@@ -118,8 +135,6 @@ class StopLossManager:
                 if loss_percent + EPSILON < stop_percent:
                     continue
 
-                # Close only this entry's remaining quantity.
-                # CloseOrderManager prevents duplicate pending close orders.
                 try:
                     closing_result = close_order_manager.close_entry(
                         db=db,
@@ -128,7 +143,6 @@ class StopLossManager:
                     )
 
                 except Exception as close_error:
-
                     logger.exception(
                         "Stop-loss close request failed for entry %s.",
                         entry.id,
@@ -152,7 +166,6 @@ class StopLossManager:
                 })
 
             except Exception:
-
                 logger.exception(
                     "Stop-loss processing failed for entry %s.",
                     entry.id,
