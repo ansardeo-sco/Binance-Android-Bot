@@ -1,3 +1,4 @@
+
 import asyncio
 import logging
 
@@ -19,7 +20,7 @@ from binance_client import binance_client
 from engine import trading_engine
 from order_manager import order_manager
 from risk_manager import risk_manager
-from api_routes import router
+from api_routes import router, require_admin_token
 
 
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +34,6 @@ ACTIVE_CYCLE_STATUSES = [
 ]
 
 
-# BotSymbolSettings کو بھی ڈیٹابیس میں رجسٹر کریں۔
 Base.metadata.create_all(bind=engine)
 
 
@@ -51,6 +51,7 @@ async def lifespan(app: FastAPI):
 
     try:
         await task
+
     except asyncio.CancelledError:
         pass
 
@@ -70,6 +71,7 @@ app.include_router(router)
 
 
 class InitialEntryRequest(BaseModel):
+
     symbol: str
     direction: str
 
@@ -90,12 +92,14 @@ def read_root():
 def health_check(db: Session = Depends(get_db)):
 
     try:
+
         from sqlalchemy import text
 
         db.execute(text("SELECT 1"))
         database_status = "connected"
 
     except Exception:
+
         database_status = "disconnected"
 
     return {
@@ -117,6 +121,7 @@ def get_balance():
     result = binance_client.verify_connection()
 
     if result.get("status") != "Connected":
+
         raise HTTPException(
             status_code=503,
             detail=result.get(
@@ -137,13 +142,13 @@ def get_balance():
 def create_initial_entry(
     request: InitialEntryRequest,
     db: Session = Depends(get_db),
+    _: None = Depends(require_admin_token),
 ):
 
     new_cycle = None
 
     try:
 
-        # پہلے منتخب کوائن کی محفوظ سیٹنگز حاصل کریں۔
         symbol_settings = settings_manager.get_symbol_settings(
             db,
             request.symbol,
@@ -152,20 +157,28 @@ def create_initial_entry(
         direction = request.direction.strip().upper()
 
         if direction not in ("LONG", "SHORT"):
-            raise ValueError("Direction must be LONG or SHORT.")
-
-        # جس سمت کی اجازت بند ہو، اس سمت کا سائیکل نہیں بنے گا۔
-        if direction == "LONG" and not symbol_settings["enabled_long"]:
             raise ValueError(
-                f"LONG trading is disabled for {symbol_settings['symbol']}."
+                "Direction must be LONG or SHORT."
             )
 
-        if direction == "SHORT" and not symbol_settings["enabled_short"]:
+        if (
+            direction == "LONG"
+            and not symbol_settings["enabled_long"]
+        ):
             raise ValueError(
-                f"SHORT trading is disabled for {symbol_settings['symbol']}."
+                f"LONG trading is disabled for "
+                f"{symbol_settings['symbol']}."
             )
 
-        # مارجن اور لیوریج اسی کوائن کی سیٹنگز سے آئیں گے۔
+        if (
+            direction == "SHORT"
+            and not symbol_settings["enabled_short"]
+        ):
+            raise ValueError(
+                f"SHORT trading is disabled for "
+                f"{symbol_settings['symbol']}."
+            )
+
         validated = risk_manager.validate_initial_entry(
             symbol=symbol_settings["symbol"],
             direction=direction,
@@ -184,6 +197,7 @@ def create_initial_entry(
         )
 
         if existing_cycle:
+
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -202,13 +216,14 @@ def create_initial_entry(
         )
 
         if active_count >= settings.MAX_ACTIVE_CYCLES_PER_SYMBOL:
+
             raise HTTPException(
                 status_code=409,
-                detail="Maximum active cycles limit reached for this symbol.",
+                detail=(
+                    "Maximum active cycles limit reached for this symbol."
+                ),
             )
 
-        # سائیکل میں سیٹنگز کی مستقل نقل محفوظ ہوگی۔
-        # بعد میں کوائن کی عمومی سیٹنگز بدلنے سے پرانا سائیکل متاثر نہیں ہوگا۔
         new_cycle = TradingCycle(
             symbol=validated["symbol"],
             direction=validated["direction"],
@@ -239,6 +254,7 @@ def create_initial_entry(
         )
 
         if result.get("order_status") == "UNKNOWN":
+
             new_cycle.status = "ORDER_UNCONFIRMED"
             db.commit()
 
@@ -269,6 +285,7 @@ def create_initial_entry(
         raise
 
     except ValueError as error:
+
         db.rollback()
 
         raise HTTPException(
@@ -277,9 +294,11 @@ def create_initial_entry(
         )
 
     except RuntimeError as error:
+
         db.rollback()
 
         if new_cycle is not None:
+
             saved_cycle = (
                 db.query(TradingCycle)
                 .filter(TradingCycle.id == new_cycle.id)
@@ -287,6 +306,7 @@ def create_initial_entry(
             )
 
             if saved_cycle:
+
                 unknown_entry = (
                     db.query(CycleEntry)
                     .filter(
@@ -310,12 +330,15 @@ def create_initial_entry(
         )
 
     except Exception:
+
         db.rollback()
 
         logger.exception("Initial entry request failed.")
 
         if new_cycle is not None:
+
             try:
+
                 saved_cycle = (
                     db.query(TradingCycle)
                     .filter(TradingCycle.id == new_cycle.id)
@@ -323,6 +346,7 @@ def create_initial_entry(
                 )
 
                 if saved_cycle:
+
                     unknown_entry = (
                         db.query(CycleEntry)
                         .filter(
@@ -341,6 +365,7 @@ def create_initial_entry(
                     db.commit()
 
             except Exception:
+
                 db.rollback()
 
         raise HTTPException(
@@ -357,7 +382,9 @@ def get_active_cycles(db: Session = Depends(get_db)):
 
     cycles = (
         db.query(TradingCycle)
-        .filter(TradingCycle.status.in_(ACTIVE_CYCLE_STATUSES))
+        .filter(
+            TradingCycle.status.in_(ACTIVE_CYCLE_STATUSES)
+        )
         .order_by(TradingCycle.created_at.desc())
         .all()
     )
@@ -396,6 +423,7 @@ def get_cycle(
     )
 
     if not cycle:
+
         raise HTTPException(
             status_code=404,
             detail="Trading cycle not found.",
