@@ -273,6 +273,7 @@ def get_bot_events(
 @router.get("/positions/exchange")
 def get_exchange_positions(
     db: Session = Depends(get_db),
+    _: None = Depends(require_admin_token),
 ):
 
     records = (
@@ -305,7 +306,9 @@ def get_exchange_positions(
 
 
 @router.post("/positions/reconcile")
-def reconcile_positions():
+def reconcile_positions(
+    _: None = Depends(require_admin_token),
+):
 
     try:
         return reconciliation_manager.sync_positions()
@@ -326,7 +329,9 @@ def reconcile_positions():
 
 
 @router.post("/orders/synchronize")
-def synchronize_orders():
+def synchronize_orders(
+    _: None = Depends(require_admin_token),
+):
 
     try:
         results = order_status_manager.sync_pending_orders()
