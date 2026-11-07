@@ -1,13 +1,15 @@
 
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from database import get_db
+
 from models import (
     Notification,
     BotEvent,
     ExchangePosition,
-    CycleOrder,
     ReentryRecord,
 )
 
@@ -15,6 +17,8 @@ from notification_manager import notification_manager
 from order_status_manager import order_status_manager
 from reconciliation_manager import reconciliation_manager
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/v1",
@@ -25,10 +29,9 @@ router = APIRouter(
 @router.get("/notifications")
 def get_notifications(
     unread_only: bool = False,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    limit = max(1, min(limit, 100))
 
     query = db.query(Notification)
 
@@ -68,6 +71,7 @@ def mark_notification_read(
     notification_id: int,
     db: Session = Depends(get_db),
 ):
+
     success = notification_manager.mark_as_read(
         db,
         notification_id,
@@ -76,18 +80,20 @@ def mark_notification_read(
     if not success:
         raise HTTPException(
             status_code=404,
-            detail="Notification not found",
+            detail="Notification not found.",
         )
 
-    return {"success": True}
+    return {
+        "success": True,
+        "notification_id": notification_id,
+    }
 
 
 @router.get("/events")
 def get_bot_events(
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    limit = max(1, min(limit, 100))
 
     events = (
         db.query(BotEvent)
@@ -120,9 +126,13 @@ def get_bot_events(
 def get_exchange_positions(
     db: Session = Depends(get_db),
 ):
+
     records = (
         db.query(ExchangePosition)
-        .order_by(ExchangePosition.symbol)
+        .order_by(
+            ExchangePosition.symbol,
+            ExchangePosition.direction,
+        )
         .all()
     )
 
@@ -148,21 +158,28 @@ def get_exchange_positions(
 
 @router.post("/positions/reconcile")
 def reconcile_positions():
+
     try:
         return reconciliation_manager.sync_positions()
 
     except Exception as error:
+
+        logger.exception(
+            "Position reconciliation API failed."
+        )
+
         raise HTTPException(
             status_code=503,
             detail=(
-                "Position synchronization failed: "
-                f"{error}"
+                "Position synchronization failed. "
+                "Check server logs and Binance Testnet connection."
             ),
-        )
+        ) from error
 
 
 @router.post("/orders/synchronize")
 def synchronize_orders():
+
     try:
         results = order_status_manager.sync_pending_orders()
 
@@ -173,26 +190,31 @@ def synchronize_orders():
         }
 
     except Exception as error:
+
+        logger.exception(
+            "Order synchronization API failed."
+        )
+
         raise HTTPException(
             status_code=503,
             detail=(
-                "Order synchronization failed: "
-                f"{error}"
+                "Order synchronization failed. "
+                "Check server logs and Binance Testnet order history."
             ),
-        )
+        ) from error
 
 
 @router.get("/reentries")
 def get_reentries(
     status: str = None,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    limit = max(1, min(limit, 100))
 
     query = db.query(ReentryRecord)
 
     if status:
+
         allowed_statuses = {
             "WAITING",
             "PROCESSING",
