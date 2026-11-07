@@ -1,5 +1,4 @@
 import logging
-import uuid
 
 from config import settings
 from binance_client import binance_client
@@ -10,13 +9,7 @@ logger = logging.getLogger(__name__)
 
 class AutomatedEntryManager:
 
-    def place_entry(
-        self,
-        db,
-        cycle,
-        entry_type,
-        margin,
-    ):
+    def place_entry(self, db, cycle, entry_type, margin):
 
         if not settings.BINANCE_USE_TESTNET:
             raise RuntimeError(
@@ -31,6 +24,9 @@ class AutomatedEntryManager:
         if entry_type not in ("AVERAGING", "OPPOSITE"):
             raise ValueError("Invalid automated entry type.")
 
+        if cycle.direction not in ("LONG", "SHORT"):
+            raise ValueError("Invalid cycle direction.")
+
         margin = float(margin or 0)
 
         if margin < settings.MIN_MARGIN_USDT:
@@ -39,11 +35,26 @@ class AutomatedEntryManager:
         if margin > settings.MAX_MARGIN_USDT:
             raise ValueError("Margin exceeds the maximum limit.")
 
+        # ایک Cycle میں ایک ہی قسم کا automated entry دوبارہ نہ لگائیں۔
+        existing = (
+            db.query(CycleEntry)
+            .filter(
+                CycleEntry.cycle_id == cycle.id,
+                CycleEntry.entry_type == entry_type,
+            )
+            .first()
+        )
+
+        if existing:
+            raise RuntimeError(
+                f"{entry_type} entry already exists for this cycle. "
+                "Check its exchange status before taking further action."
+            )
+
         exchange = binance_client.exchange
         symbol = cycle.symbol
 
         binance_client._load_markets_sync()
-
         market_price = binance_client._fetch_mark_price_sync(symbol)
 
         if market_price <= 0:
@@ -77,9 +88,23 @@ class AutomatedEntryManager:
         if min_amount is not None and quantity < float(min_amount):
             raise ValueError("Quantity is below exchange minimum.")
 
-        client_order_id = (
-            "bot_" + uuid.uuid4().hex[:24]
+        # مستقل اور قابل شناخت Client Order ID۔
+        suffix = "A" if entry_type == "AVERAGING" else "O"
+        client_order_id = f"bot{cycle.id}{suffix}"
+
+        duplicate_order = (
+            db.query(CycleOrder)
+            .filter(CycleOrder.client_order_id == client_order_id)
+            .first()
         )
+
+        if duplicate_order:
+            raise RuntimeError(
+                "This automated order ID already exists. "
+                "Exchange reconciliation is required."
+            )
+
+        side = "buy" if cycle.direction == "LONG" else "sell"
 
         entry = CycleEntry(
             cycle_id=cycle.id,
@@ -94,10 +119,6 @@ class AutomatedEntryManager:
             remaining_quantity=0.0,
             stop_loss_percent=cycle.sl_percent,
             client_order_id=client_order_id,
-        )
-
-        side = (
-            "buy" if cycle.direction == "LONG" else "sell"
         )
 
         order = CycleOrder(
@@ -119,11 +140,10 @@ class AutomatedEntryManager:
         order.entry_id = entry.id
         db.add(order)
 
-        # پہلے مقامی ریکارڈ محفوظ کیا جاتا ہے۔
+        # Exchange سے رابطے سے پہلے مقامی ریکارڈ محفوظ کریں۔
         db.commit()
 
         try:
-
             result = exchange.create_order(
                 symbol=symbol,
                 type="market",
@@ -145,7 +165,9 @@ class AutomatedEntryManager:
             order.exchange_order_id = str(order_id)
             entry.exchange_order_id = str(order_id)
 
-            # فوری Fill کو صرف Exchange confirmation کے بعد درج کریں۔
+            # Order ID کو Fetch سے پہلے محفوظ کریں۔
+            db.commit()
+
             confirmed = exchange.fetch_order(order_id, symbol)
 
             filled = float(confirmed.get("filled") or 0)
@@ -153,13 +175,13 @@ class AutomatedEntryManager:
 
             order.filled_quantity = filled
             order.average_fill_price = (
-                float(average) if average else None
+                float(average) if average is not None else None
             )
 
             entry.filled_quantity = filled
             entry.remaining_quantity = filled
             entry.entry_price = (
-                float(average) if average else None
+                float(average) if average is not None else None
             )
 
             status = str(
@@ -167,8 +189,16 @@ class AutomatedEntryManager:
             ).lower()
 
             if status == "closed":
-                order.status = "FILLED"
-                entry.status = "FILLED"
+                order.status = "FILLED" if filled > 0 else "CANCELLED"
+                entry.status = "FILLED" if filled > 0 else "CANCELLED"
+
+            elif status in ("canceled", "cancelled", "expired", "rejected"):
+                order.status = (
+                    "CANCELLED_PARTIAL" if filled > 0 else "CANCELLED"
+                )
+                entry.status = (
+                    "PARTIALLY_FILLED" if filled > 0 else "CANCELLED"
+                )
 
             elif filled > 0:
                 order.status = "PARTIALLY_FILLED"
@@ -191,7 +221,6 @@ class AutomatedEntryManager:
             }
 
         except Exception as error:
-
             db.rollback()
 
             saved_entry = (
@@ -225,7 +254,7 @@ class AutomatedEntryManager:
 
             raise RuntimeError(
                 "Automated order status is UNKNOWN. "
-                "Check Binance Testnet before retrying."
+                "Do not retry before Binance Testnet reconciliation."
             ) from error
 
 
