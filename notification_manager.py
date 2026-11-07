@@ -15,23 +15,26 @@ class NotificationManager:
         cycle_id=None,
         severity="INFO",
     ):
+
+        now = datetime.now(timezone.utc)
+
         notification = Notification(
             cycle_id=cycle_id,
             symbol=symbol,
-            title=title,
-            message=message,
-            notification_type=notification_type,
+            title=str(title),
+            message=str(message),
+            notification_type=str(notification_type),
             is_read=False,
-            created_at=datetime.now(timezone.utc),
+            created_at=now,
         )
 
         event = BotEvent(
-            event_type=notification_type,
-            severity=severity,
+            event_type=str(notification_type),
+            severity=str(severity),
             symbol=symbol,
             cycle_id=cycle_id,
-            message=message,
-            created_at=datetime.now(timezone.utc),
+            message=str(message),
+            created_at=now,
         )
 
         db.add(notification)
@@ -41,19 +44,44 @@ class NotificationManager:
 
     @staticmethod
     def mark_as_read(db, notification_id):
+
         notification = (
             db.query(Notification)
-            .filter(Notification.id == notification_id)
+            .filter(
+                Notification.id == notification_id
+            )
             .first()
         )
 
         if not notification:
             return False
 
+        if notification.is_read:
+            return True
+
         notification.is_read = True
         db.commit()
 
         return True
+
+    @staticmethod
+    def mark_all_as_read(db):
+
+        notifications = (
+            db.query(Notification)
+            .filter(Notification.is_read.is_(False))
+            .all()
+        )
+
+        for notification in notifications:
+            notification.is_read = True
+
+        db.commit()
+
+        return {
+            "success": True,
+            "updated": len(notifications),
+        }
 
 
 notification_manager = NotificationManager()
