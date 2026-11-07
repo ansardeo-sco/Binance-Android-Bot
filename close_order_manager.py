@@ -10,12 +10,13 @@ from models import CycleEntry, CycleOrder
 
 logger = logging.getLogger(__name__)
 
-
 OPEN_CLOSE_STATUSES = [
     "PENDING",
     "PARTIALLY_FILLED",
     "UNKNOWN",
 ]
+
+EPSILON = 0.00000001
 
 
 class CloseOrderManager:
@@ -28,12 +29,19 @@ class CloseOrderManager:
         with self._lock:
 
             if not settings.BINANCE_USE_TESTNET:
-                raise RuntimeError("Closing orders are restricted to Testnet.")
+                raise RuntimeError(
+                    "Closing orders are restricted to Testnet."
+                )
 
             settings.validate_trading_mode()
 
-            if not settings.BINANCE_API_KEY or not settings.BINANCE_API_SECRET:
-                raise RuntimeError("Binance API credentials are missing.")
+            if (
+                not settings.BINANCE_API_KEY
+                or not settings.BINANCE_API_SECRET
+            ):
+                raise RuntimeError(
+                    "Binance API credentials are missing."
+                )
 
             entry = (
                 db.query(CycleEntry)
@@ -47,14 +55,16 @@ class CloseOrderManager:
 
             remaining = float(entry.remaining_quantity or 0)
 
-            if remaining <= 0:
+            if remaining <= EPSILON:
                 return {
                     "success": True,
                     "message": "Entry is already closed.",
                     "entry_id": entry.id,
                 }
 
-            # ایک Cycle میں ایک وقت میں صرف ایک Close Order۔
+            if entry.direction not in ("LONG", "SHORT"):
+                raise ValueError("Invalid entry direction.")
+
             pending_close = (
                 db.query(CycleOrder)
                 .filter(
@@ -68,23 +78,45 @@ class CloseOrderManager:
             if pending_close:
                 return {
                     "success": False,
-                    "message": "A closing order is already pending for this cycle.",
+                    "message": (
+                        "A closing order is already pending "
+                        "or unconfirmed for this cycle."
+                    ),
                     "entry_id": entry.id,
                     "order_id": pending_close.id,
                 }
 
             exchange = binance_client.exchange
 
-            positions = exchange.fetch_positions()
+            exchange_symbol = binance_client.get_exchange_symbol(
+                entry.symbol
+            )
+
+            market = exchange.market(exchange_symbol)
+            market_id = str(market.get("id") or "").upper()
+
+            positions = exchange.fetch_positions([
+                exchange_symbol
+            ])
 
             exchange_quantity = 0.0
 
             for position in positions:
+
                 info = position.get("info") or {}
 
-                exchange_symbol = str(
+                exchange_symbol_value = str(
+                    position.get("symbol") or ""
+                ).upper()
+
+                exchange_id_value = str(
                     info.get("symbol") or ""
                 ).upper()
+
+                matches_symbol = (
+                    exchange_symbol_value == exchange_symbol.upper()
+                    or exchange_id_value == market_id
+                )
 
                 position_side = str(
                     info.get("positionSide")
@@ -93,31 +125,35 @@ class CloseOrderManager:
                 ).upper()
 
                 if (
-                    exchange_symbol == entry.symbol.upper()
-                    and position_side == entry.direction.upper()
+                    matches_symbol
+                    and position_side == entry.direction
                 ):
+
                     raw_amount = info.get("positionAmt")
 
                     if raw_amount is not None:
-                        exchange_quantity = abs(float(raw_amount))
+                        exchange_quantity += abs(
+                            float(raw_amount)
+                        )
                     else:
-                        exchange_quantity = abs(
+                        exchange_quantity += abs(
                             float(position.get("contracts") or 0)
                         )
 
-                    break
-
-            if exchange_quantity <= 0:
+            if exchange_quantity <= EPSILON:
                 raise RuntimeError(
                     "No matching exchange position found. "
                     "Reconcile positions before closing."
                 )
 
-            close_quantity = min(remaining, exchange_quantity)
+            close_quantity = min(
+                remaining,
+                exchange_quantity,
+            )
 
             close_quantity = float(
                 exchange.amount_to_precision(
-                    entry.symbol,
+                    exchange_symbol,
                     close_quantity,
                 )
             )
@@ -125,7 +161,9 @@ class CloseOrderManager:
             if close_quantity <= 0:
                 raise ValueError("Closing quantity is zero.")
 
-            client_order_id = "close_" + uuid.uuid4().hex[:24]
+            client_order_id = (
+                "close_" + uuid.uuid4().hex[:24]
+            )
 
             close_side = (
                 "sell" if entry.direction == "LONG" else "buy"
@@ -149,8 +187,9 @@ class CloseOrderManager:
             db.refresh(order_record)
 
             try:
+
                 result = exchange.create_order(
-                    symbol=entry.symbol,
+                    symbol=exchange_symbol,
                     type="market",
                     side=close_side,
                     amount=close_quantity,
@@ -194,6 +233,7 @@ class CloseOrderManager:
                 }
 
             except Exception as error:
+
                 db.rollback()
 
                 saved_order = (
@@ -209,7 +249,9 @@ class CloseOrderManager:
                     saved_order.error_message = str(error)
                     db.commit()
 
-                logger.exception("Closing order confirmation failed.")
+                logger.exception(
+                    "Closing order confirmation failed."
+                )
 
                 raise RuntimeError(
                     "Closing order status is unknown. "
