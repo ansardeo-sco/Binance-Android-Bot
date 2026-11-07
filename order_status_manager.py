@@ -19,27 +19,29 @@ class OrderStatusManager:
     }
 
     def sync_pending_orders(self):
+
         db = SessionLocal()
         results = []
 
         try:
+
             orders = (
                 db.query(CycleOrder)
                 .filter(
                     CycleOrder.status.in_([
                         "PENDING",
                         "PARTIALLY_FILLED",
-                    ]),
-                    CycleOrder.exchange_order_id.isnot(None),
+                        "UNKNOWN",
+                    ])
                 )
                 .all()
             )
 
             for order in orders:
+
                 try:
-                    exchange_order = (
-                        binance_fetch_order(order)
-                    )
+
+                    exchange_order = binance_fetch_order(order)
 
                     if not exchange_order:
                         continue
@@ -66,6 +68,7 @@ class OrderStatusManager:
                     entry = None
 
                     if order.entry_id:
+
                         entry = (
                             db.query(CycleEntry)
                             .filter(
@@ -73,6 +76,14 @@ class OrderStatusManager:
                             )
                             .first()
                         )
+
+                    order_id = exchange_order.get("id")
+
+                    if order_id:
+                        order.exchange_order_id = str(order_id)
+
+                        if entry:
+                            entry.exchange_order_id = str(order_id)
 
                     order.filled_quantity = new_filled
 
@@ -82,20 +93,15 @@ class OrderStatusManager:
                     if entry and fill_delta > 0:
 
                         if order.reduce_position:
+
                             entry.remaining_quantity = max(
                                 0.0,
                                 float(entry.remaining_quantity or 0)
                                 - fill_delta,
                             )
 
-                            if entry.remaining_quantity <= 0.00000001:
-                                entry.remaining_quantity = 0.0
-                                entry.status = "CLOSED"
-                                entry.closed_at = datetime.now(
-                                    timezone.utc
-                                )
-
                         else:
+
                             entry.filled_quantity = new_filled
 
                             entry.remaining_quantity = (
@@ -112,45 +118,70 @@ class OrderStatusManager:
                                 )
 
                     if exchange_status == "closed":
+
                         order.status = (
-                            "FILLED" if new_filled > 0 else "CANCELLED"
+                            "FILLED"
+                            if new_filled > 0
+                            else "CANCELLED"
                         )
 
                     elif exchange_status in self.TERMINAL_STATUSES:
+
                         order.status = (
-                            "PARTIALLY_FILLED"
+                            "CANCELLED_PARTIAL"
                             if new_filled > 0
                             else "CANCELLED"
                         )
 
                     elif new_filled > 0:
+
                         order.status = "PARTIALLY_FILLED"
 
                     else:
+
                         order.status = "PENDING"
 
-                    if entry and not order.reduce_position:
-                        if exchange_status == "closed" and new_filled > 0:
-                            entry.status = "FILLED"
-                        elif new_filled > 0:
-                            entry.status = "PARTIALLY_FILLED"
-                        elif exchange_status in self.TERMINAL_STATUSES:
-                            entry.status = "CANCELLED"
+                    if entry:
 
-                    if order.reduce_position and entry:
-                        if entry.remaining_quantity <= 0.00000001:
-                            entry.remaining_quantity = 0.0
-                            entry.status = "CLOSED"
-                            entry.closed_at = datetime.now(timezone.utc)
+                        if order.reduce_position:
+
+                            if entry.remaining_quantity <= 0.00000001:
+
+                                entry.remaining_quantity = 0.0
+                                entry.status = "CLOSED"
+
+                                entry.closed_at = datetime.now(
+                                    timezone.utc
+                                )
+
+                            elif entry.remaining_quantity > 0:
+
+                                entry.status = "PARTIALLY_FILLED"
+
+                        else:
+
+                            if exchange_status == "closed" and new_filled > 0:
+                                entry.status = "FILLED"
+
+                            elif new_filled > 0:
+                                entry.status = "PARTIALLY_FILLED"
+
+                            elif exchange_status in self.TERMINAL_STATUSES:
+                                entry.status = "CANCELLED"
+
+                            elif order.status == "PENDING":
+                                entry.status = "PENDING"
 
                     results.append({
-                        "order_id": order.id,
+                        "local_order_id": order.id,
                         "exchange_order_id": order.exchange_order_id,
+                        "client_order_id": order.client_order_id,
                         "status": order.status,
                         "filled_quantity": new_filled,
                         "new_fill_quantity": fill_delta,
                         "remaining_quantity": (
-                            entry.remaining_quantity if entry else None
+                            entry.remaining_quantity
+                            if entry else None
                         ),
                     })
 
@@ -160,10 +191,12 @@ class OrderStatusManager:
                             entry.cycle_id,
                         )
 
-                except Exception:
-                    logger.exception(
-                        "Unable to synchronize order %s",
+                except Exception as error:
+
+                    logger.warning(
+                        "Order %s could not be synchronized: %s",
                         order.id,
+                        error,
                     )
 
             db.commit()
@@ -171,8 +204,13 @@ class OrderStatusManager:
             return results
 
         except Exception:
+
             db.rollback()
-            logger.exception("Order synchronization failed.")
+
+            logger.exception(
+                "Order synchronization failed."
+            )
+
             raise
 
         finally:
@@ -183,7 +221,9 @@ class OrderStatusManager:
 
         cycle = (
             db.query(TradingCycle)
-            .filter(TradingCycle.id == cycle_id)
+            .filter(
+                TradingCycle.id == cycle_id
+            )
             .first()
         )
 
@@ -192,7 +232,9 @@ class OrderStatusManager:
 
         entries = (
             db.query(CycleEntry)
-            .filter(CycleEntry.cycle_id == cycle_id)
+            .filter(
+                CycleEntry.cycle_id == cycle_id
+            )
             .all()
         )
 
@@ -205,6 +247,7 @@ class OrderStatusManager:
         )
 
         if all_closed:
+
             cycle.status = "CLOSED"
 
             if not cycle.closed_at:
@@ -220,21 +263,69 @@ class OrderStatusManager:
                 CycleOrder.status.in_([
                     "PENDING",
                     "PARTIALLY_FILLED",
+                    "UNKNOWN",
                 ]),
             )
             .count()
         )
 
-        if pending_closes == 0 and cycle.status == "CLOSING_TP":
-            cycle.status = "ACTIVE"
+        if (
+            pending_closes == 0
+            and cycle.status in (
+                "CLOSING_TP",
+                "ORDER_UNCONFIRMED",
+            )
+        ):
+
+            unresolved_entries = (
+                db.query(CycleEntry)
+                .filter(
+                    CycleEntry.cycle_id == cycle_id,
+                    CycleEntry.status == "UNKNOWN",
+                )
+                .count()
+            )
+
+            unresolved_orders = (
+                db.query(CycleOrder)
+                .filter(
+                    CycleOrder.cycle_id == cycle_id,
+                    CycleOrder.status == "UNKNOWN",
+                )
+                .count()
+            )
+
+            if unresolved_entries == 0 and unresolved_orders == 0:
+                cycle.status = "ACTIVE"
 
 
 def binance_fetch_order(order):
+
     from binance_client import binance_client
 
-    return binance_client.exchange.fetch_order(
-        order.exchange_order_id,
-        order.symbol,
+    exchange = binance_client.exchange
+
+    if order.exchange_order_id:
+
+        return exchange.fetch_order(
+            order.exchange_order_id,
+            order.symbol,
+        )
+
+    if order.client_order_id:
+
+        # Binance USD-M Futures میں Client Order ID کے ذریعے
+        # پہلے سے بھیجے گئے آرڈر کی تلاش۔
+        return exchange.fetch_order(
+            None,
+            order.symbol,
+            {
+                "origClientOrderId": order.client_order_id,
+            },
+        )
+
+    raise RuntimeError(
+        "Order has neither exchange ID nor client order ID."
     )
 
 
