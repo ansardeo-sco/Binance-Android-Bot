@@ -1,3 +1,5 @@
+
+from config import settings
 from models import TradingCycle, CycleEvent, CycleOrder, CycleEntry
 from automated_entry_manager import automated_entry_manager
 
@@ -6,6 +8,12 @@ OPEN_ORDER_STATUSES = [
     "PENDING",
     "PARTIALLY_FILLED",
     "UNKNOWN",
+]
+
+ACTIVE_CYCLE_STATUSES = [
+    "ACTIVE",
+    "CLOSING_TP",
+    "ORDER_UNCONFIRMED",
 ]
 
 
@@ -49,11 +57,7 @@ class OppositePositionManager:
             .filter(
                 TradingCycle.symbol == cycle.symbol,
                 TradingCycle.direction == opposite_direction,
-                TradingCycle.status.in_([
-                    "ACTIVE",
-                    "CLOSING_TP",
-                    "ORDER_UNCONFIRMED",
-                ]),
+                TradingCycle.status.in_(ACTIVE_CYCLE_STATUSES),
             )
             .first()
         )
@@ -78,6 +82,34 @@ class OppositePositionManager:
                 "opposite_cycle_id": existing.id,
             }
 
+        # ایک Symbol کے لیے زیادہ سے زیادہ Active Cycles کی حد۔
+        active_count = (
+            db.query(TradingCycle)
+            .filter(
+                TradingCycle.symbol == cycle.symbol,
+                TradingCycle.status.in_(ACTIVE_CYCLE_STATUSES),
+            )
+            .count()
+        )
+
+        if active_count >= settings.MAX_ACTIVE_CYCLES_PER_SYMBOL:
+            cycle.opposite_triggered = True
+            db.commit()
+
+            self._record_event(
+                db,
+                cycle,
+                adverse_percent,
+                "OPPOSITE_SKIPPED",
+                "SKIPPED",
+                "Maximum active cycles limit reached for this symbol.",
+            )
+
+            return {
+                "triggered": False,
+                "message": "Maximum active cycles limit reached.",
+            }
+
         # نئی مخالف سمت کی Cycle میں پرانی Cycle کی Settings محفوظ کریں۔
         opposite_cycle = TradingCycle(
             symbol=cycle.symbol,
@@ -99,7 +131,6 @@ class OppositePositionManager:
         db.commit()
         db.refresh(opposite_cycle)
 
-        # اصل Cycle میں بھی اس کوشش کا مستقل ریکارڈ رکھیں۔
         cycle.opposite_triggered = True
         cycle.opposite_cycle_id = opposite_cycle.id
         db.commit()
@@ -130,7 +161,6 @@ class OppositePositionManager:
         except Exception:
             db.rollback()
 
-            # ناکامی یا غیر یقینی صورت میں خالی Cycle کو ACTIVE نہ چھوڑیں۔
             saved_cycle = (
                 db.query(TradingCycle)
                 .filter(TradingCycle.id == opposite_cycle.id)
