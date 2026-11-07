@@ -1,5 +1,13 @@
+
 from models import CycleEntry, CycleOrder
 from close_order_manager import close_order_manager
+
+
+OPEN_CLOSE_STATUSES = [
+    "PENDING",
+    "PARTIALLY_FILLED",
+    "UNKNOWN",
+]
 
 
 class TakeProfitManager:
@@ -17,11 +25,7 @@ class TakeProfitManager:
             .filter(
                 CycleOrder.cycle_id == cycle.id,
                 CycleOrder.reduce_position.is_(True),
-                CycleOrder.status.in_([
-                    "PENDING",
-                    "PARTIALLY_FILLED",
-                    "UNKNOWN",
-                ]),
+                CycleOrder.status.in_(OPEN_CLOSE_STATUSES),
             )
             .first()
         )
@@ -43,6 +47,7 @@ class TakeProfitManager:
                 CycleEntry.remaining_quantity > 0,
                 CycleEntry.entry_price.isnot(None),
             )
+            .order_by(CycleEntry.id.asc())
             .all()
         )
 
@@ -65,7 +70,14 @@ class TakeProfitManager:
 
         average_price = weighted_value / total_quantity
 
+        if average_price <= 0:
+            return {
+                "triggered": False,
+                "message": "Invalid average entry price.",
+            }
+
         if cycle.direction == "LONG":
+
             profit_percent = (
                 (current_price - average_price) / average_price
             ) * 100
@@ -75,6 +87,7 @@ class TakeProfitManager:
             )
 
         elif cycle.direction == "SHORT":
+
             profit_percent = (
                 (average_price - current_price) / average_price
             ) * 100
@@ -102,30 +115,29 @@ class TakeProfitManager:
                 "target_price": target_price,
             }
 
-        # Latch the cycle to prevent duplicate TP submissions.
+        # Cycle کو بند ہونے کے عمل میں منتقل کریں۔
         cycle.status = "CLOSING_TP"
         db.commit()
 
-        results = []
+        # ایک وقت میں صرف پہلی کھلی Entry بند کریں۔
+        entry = entries[0]
 
-        for entry in entries:
-            if float(entry.remaining_quantity or 0) <= 0:
-                continue
-
-            result = close_order_manager.close_entry(
-                db=db,
-                entry_id=entry.id,
-                reason="TAKE_PROFIT",
-            )
-
-            results.append(result)
+        result = close_order_manager.close_entry(
+            db=db,
+            entry_id=entry.id,
+            reason="TAKE_PROFIT",
+        )
 
         return {
             "triggered": True,
             "cycle_id": cycle.id,
             "profit_percent": profit_percent,
             "target_price": target_price,
-            "closing_results": results,
+            "closing_results": [result],
+            "message": (
+                "First close order submitted. "
+                "Remaining entries will be processed after confirmation."
+            ),
         }
 
 
