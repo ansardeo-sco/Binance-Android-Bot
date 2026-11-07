@@ -1,3 +1,4 @@
+
 import logging
 
 from config import settings
@@ -63,7 +64,6 @@ class AutomatedEntryManager:
                 "Invalid cycle direction."
             )
 
-        # OPPOSITE انٹری کی سمت کی اجازت دوبارہ چیک کریں۔
         if entry_type == "OPPOSITE":
 
             symbol_settings = settings_manager.get_symbol_settings(
@@ -85,14 +85,13 @@ class AutomatedEntryManager:
 
         margin = float(margin or 0)
 
-        if margin < settings.MIN_MARGIN_USDT:
+        if not (
+            settings.MIN_MARGIN_USDT
+            <= margin
+            <= settings.MAX_MARGIN_USDT
+        ):
             raise ValueError(
-                "Margin is below the minimum limit."
-            )
-
-        if margin > settings.MAX_MARGIN_USDT:
-            raise ValueError(
-                "Margin exceeds the maximum limit."
+                "Margin is outside the permitted limits."
             )
 
         existing = (
@@ -115,24 +114,28 @@ class AutomatedEntryManager:
 
         binance_client._load_markets_sync()
 
+        exchange_symbol = binance_client.get_exchange_symbol(
+            symbol
+        )
+
         market_price = binance_client._fetch_mark_price_sync(
             symbol
         )
 
-        if market_price <= 0:
-            raise ValueError(
-                "Invalid market price."
-            )
+        if not market_price or market_price <= 0:
+            raise ValueError("Invalid market price.")
 
         leverage = int(cycle.leverage)
 
         if leverage < 1 or leverage > settings.MAX_LEVERAGE:
-            raise ValueError(
-                "Invalid leverage."
-            )
+            raise ValueError("Invalid leverage.")
 
-        self._set_isolated_margin(exchange, symbol)
-        exchange.set_leverage(leverage, symbol)
+        self._set_isolated_margin(exchange, exchange_symbol)
+
+        exchange.set_leverage(
+            leverage,
+            exchange_symbol,
+        )
 
         raw_quantity = (
             margin * leverage
@@ -140,7 +143,7 @@ class AutomatedEntryManager:
 
         quantity = float(
             exchange.amount_to_precision(
-                symbol,
+                exchange_symbol,
                 raw_quantity,
             )
         )
@@ -150,7 +153,7 @@ class AutomatedEntryManager:
                 "Calculated quantity is zero."
             )
 
-        market = exchange.market(symbol)
+        market = exchange.market(exchange_symbol)
         limits = market.get("limits") or {}
 
         min_amount = (
@@ -176,7 +179,7 @@ class AutomatedEntryManager:
             and estimated_cost < float(min_cost)
         ):
             raise ValueError(
-                "Order value is below the exchange minimum cost."
+                "Order value is below exchange minimum cost."
             )
 
         suffix = (
@@ -237,13 +240,13 @@ class AutomatedEntryManager:
         order.entry_id = entry.id
         db.add(order)
 
-        # Binance کو درخواست بھیجنے سے پہلے مقامی ریکارڈ محفوظ کریں۔
+        # Exchange request سے پہلے ریکارڈ محفوظ کریں۔
         db.commit()
 
         try:
 
             result = exchange.create_order(
-                symbol=symbol,
+                symbol=exchange_symbol,
                 type="market",
                 side=side,
                 amount=quantity,
@@ -267,7 +270,7 @@ class AutomatedEntryManager:
 
             confirmed = exchange.fetch_order(
                 order_id,
-                symbol,
+                exchange_symbol,
             )
 
             filled = float(
