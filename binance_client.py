@@ -26,7 +26,6 @@ class BinanceFuturesClient:
             },
         })
 
-        # Sandbox mode must be configured before loading markets.
         if settings.BINANCE_USE_TESTNET:
             self.exchange.set_sandbox_mode(True)
 
@@ -47,19 +46,40 @@ class BinanceFuturesClient:
             self.exchange.load_markets()
             self._markets_loaded = True
 
-    def _validate_symbol(self, symbol: str):
+    def _resolve_market(self, symbol: str):
 
-        if not symbol:
+        if not isinstance(symbol, str) or not symbol.strip():
             raise ValueError("Trading symbol is required.")
 
         self._load_markets_sync()
 
-        if symbol not in self.exchange.markets:
+        normalized = symbol.strip().upper()
+
+        market = self.exchange.markets.get(normalized)
+
+        if market is None:
+
+            candidates = (
+                self.exchange.markets_by_id.get(normalized, [])
+            )
+
+            if isinstance(candidates, dict):
+                candidates = [candidates]
+
+            for candidate in candidates:
+
+                if (
+                    candidate.get("contract")
+                    and candidate.get("linear") is True
+                    and candidate.get("quote") == "USDT"
+                ):
+                    market = candidate
+                    break
+
+        if not market:
             raise ValueError(
                 f"Unsupported Binance Futures market: {symbol}"
             )
-
-        market = self.exchange.market(symbol)
 
         if not market.get("contract"):
             raise ValueError(
@@ -71,7 +91,22 @@ class BinanceFuturesClient:
                 f"{symbol} is not a linear USDT-margined Futures market."
             )
 
+        if market.get("quote") != "USDT":
+            raise ValueError(
+                f"{symbol} is not a USDT-quoted Futures market."
+            )
+
         return market
+
+    def get_exchange_symbol(self, symbol: str) -> str:
+
+        market = self._resolve_market(symbol)
+
+        return market["symbol"]
+
+    def _validate_symbol(self, symbol: str):
+
+        return self._resolve_market(symbol)
 
     def _fetch_mark_price_sync(self, symbol: str) -> float:
 
@@ -119,7 +154,10 @@ class BinanceFuturesClient:
 
     def _verify_connection_sync(self) -> Dict[str, Any]:
 
-        if not settings.BINANCE_API_KEY or not settings.BINANCE_API_SECRET:
+        if (
+            not settings.BINANCE_API_KEY
+            or not settings.BINANCE_API_SECRET
+        ):
             return {
                 "status": "Disconnected",
                 "error": "Binance API credentials are not configured.",
