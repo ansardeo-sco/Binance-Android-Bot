@@ -128,14 +128,18 @@ class OrderStatusManager:
                     )
 
                     if exchange_status == "closed":
+
                         if is_fully_filled:
                             order.status = "FILLED"
+
                         elif new_filled > 0:
                             order.status = "CANCELLED_PARTIAL"
+
                         else:
                             order.status = "CANCELLED"
 
                     elif exchange_status in self.TERMINAL_STATUSES:
+
                         order.status = (
                             "CANCELLED_PARTIAL"
                             if new_filled > 0
@@ -156,6 +160,7 @@ class OrderStatusManager:
                                 entry.remaining_quantity = 0.0
                                 entry.status = "CLOSED"
                                 entry.closed_at = datetime.now(timezone.utc)
+
                             else:
                                 entry.status = "PARTIALLY_FILLED"
 
@@ -187,8 +192,6 @@ class OrderStatusManager:
                         ),
                     }
 
-                    # Commit each order separately. A later failure cannot
-                    # roll back earlier successfully synchronized orders.
                     db.commit()
                     results.append(result_item)
 
@@ -239,6 +242,7 @@ class OrderStatusManager:
         total_value = 0.0
 
         for order in tp_orders:
+
             quantity = float(order.filled_quantity or 0)
             price = float(order.average_fill_price or 0)
 
@@ -266,11 +270,13 @@ class OrderStatusManager:
             return
 
         if cycle.direction == "LONG":
+
             trigger_price = reference_price * (
                 1 - reentry_percent / 100
             )
 
         elif cycle.direction == "SHORT":
+
             trigger_price = reference_price * (
                 1 + reentry_percent / 100
             )
@@ -331,9 +337,6 @@ class OrderStatusManager:
             .count()
         )
 
-        # PARTIALLY_FILLED entries can be valid open positions. They must
-        # not prevent a cycle from returning to ACTIVE after a close order
-        # has reached a terminal state.
         unresolved_entries = (
             db.query(CycleEntry)
             .filter(
@@ -356,6 +359,7 @@ class OrderStatusManager:
             and unresolved_orders == 0
             and unresolved_entries == 0
         ):
+
             was_closing_tp = cycle.status == "CLOSING_TP"
 
             cycle.status = "CLOSED"
@@ -368,25 +372,19 @@ class OrderStatusManager:
 
             return
 
-        pending_closes = (
-            db.query(CycleOrder)
-            .filter(
-                CycleOrder.cycle_id == cycle_id,
-                CycleOrder.reduce_position.is_(True),
-                CycleOrder.status.in_(OPEN_ORDER_STATUSES),
-            )
-            .count()
-        )
+        # CLOSING_TP کو ACTIVE میں واپس نہ کریں۔
+        # باقی Entries بھی TP پر بند ہونا ضروری ہیں۔
+        if cycle.status == "CLOSING_TP":
+            return
 
+        # ORDER_UNCONFIRMED صرف اس وقت ACTIVE ہو سکتا ہے
+        # جب تمام زیرِ تصدیق آرڈرز اور Entries حل ہو جائیں۔
         if (
-            pending_closes == 0
-            and cycle.status in (
-                "CLOSING_TP",
-                "ORDER_UNCONFIRMED",
-            )
+            cycle.status == "ORDER_UNCONFIRMED"
             and unresolved_orders == 0
             and unresolved_entries == 0
         ):
+
             cycle.status = "ACTIVE"
             cycle.closed_at = None
 
