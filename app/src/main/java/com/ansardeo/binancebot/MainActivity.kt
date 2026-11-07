@@ -1,6 +1,8 @@
+
 package com.ansardeo.binancebot
 
 import android.os.Bundle
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -114,9 +116,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun addSpace(parent: LinearLayout, height: Int = 12) {
-        parent.addView(View(this), LinearLayout.LayoutParams(
-            1, dp(height)
-        ))
+        parent.addView(
+            View(this),
+            LinearLayout.LayoutParams(1, dp(height))
+        )
     }
 
     private fun addLabel(
@@ -200,10 +203,9 @@ class MainActivity : AppCompatActivity() {
 
         root.addView(text("Dashboard", 23f, white, true))
         addSpace(root, 4)
-        root.addView(text(
-            "Your trading system at a glance",
-            12f, muted
-        ))
+        root.addView(
+            text("Your trading system at a glance", 12f, muted)
+        )
 
         val connection = addCard(
             root,
@@ -239,6 +241,7 @@ class MainActivity : AppCompatActivity() {
                 marginEnd = dp(6)
             }
         )
+
         balanceRow.addView(
             total,
             LinearLayout.LayoutParams(0, dp(105), 1f).apply {
@@ -252,19 +255,24 @@ class MainActivity : AppCompatActivity() {
         val cycleCard = addCard(root, "ACTIVE TRADING CYCLES")
         val cycleCount = text("--", 30f, yellow, true)
         cycleCard.addView(cycleCount)
-        cycleCard.addView(text("Currently monitored cycles", 11f, muted))
+        cycleCard.addView(
+            text("Currently monitored cycles", 11f, muted)
+        )
 
         val positionsCard = addCard(root, "ACTIVE POSITIONS")
         val positionsText = text("Loading positions...", 13f, muted)
         positionsCard.addView(positionsText)
 
         val quick = addCard(root, "QUICK ACCESS")
+
         addActionButton(quick, "View Positions") {
             showPage("Positions")
         }
+
         addActionButton(quick, "Coin Settings") {
             showPage("Settings")
         }
+
         addActionButton(quick, "Notifications & Events") {
             showPage("Activity")
         }
@@ -276,29 +284,37 @@ class MainActivity : AppCompatActivity() {
 
         getJson("$baseUrl/balance") { json, error ->
             if (error != null || json == null) {
-                connectionStatus.text = "● Server connection unavailable"
+                connectionStatus.text =
+                    "● Server connection unavailable"
                 connectionStatus.setTextColor(red)
                 topStatus.text = "● OFFLINE"
                 topStatus.setTextColor(red)
             } else {
                 val testnet = json.optBoolean("testnet", true)
+
                 connectionStatus.text =
                     if (testnet) "● Connected to Binance Testnet"
                     else "● Live mode detected"
+
                 connectionStatus.setTextColor(
                     if (testnet) green else red
                 )
+
                 topStatus.text =
                     if (testnet) "● TESTNET" else "● LIVE"
+
                 topStatus.setTextColor(
                     if (testnet) green else red
                 )
 
                 balanceText.text = String.format(
-                    "%.4f USDT", json.optDouble("balance", 0.0)
+                    "%.4f USDT",
+                    json.optDouble("balance", 0.0)
                 )
+
                 totalText.text = String.format(
-                    "%.4f USDT", json.optDouble("total_balance", 0.0)
+                    "%.4f USDT",
+                    json.optDouble("total_balance", 0.0)
                 )
             }
         }
@@ -308,7 +324,9 @@ class MainActivity : AppCompatActivity() {
                 val count = json.optInt("active_cycles_count", 0)
                 cycleCount.text = count.toString()
 
-                val cycles = json.optJSONArray("cycles") ?: JSONArray()
+                val cycles =
+                    json.optJSONArray("cycles") ?: JSONArray()
+
                 positionsText.text =
                     if (cycles.length() == 0) {
                         "No active trading cycles."
@@ -316,6 +334,7 @@ class MainActivity : AppCompatActivity() {
                         buildString {
                             for (i in 0 until cycles.length()) {
                                 val c = cycles.getJSONObject(i)
+
                                 append(
                                     "${c.optString("symbol")}  •  " +
                                     "${c.optString("direction")}  •  " +
@@ -325,7 +344,8 @@ class MainActivity : AppCompatActivity() {
                         }.trim()
                     }
             } else {
-                positionsText.text = "Unable to load active positions."
+                positionsText.text =
+                    "Unable to load active positions."
             }
         }
     }
@@ -334,10 +354,9 @@ class MainActivity : AppCompatActivity() {
         val root = pageContainer()
 
         root.addView(text("Positions", 23f, white, true))
-        root.addView(text(
-            "Active Long and Short trading cycles",
-            12f, muted
-        ))
+        root.addView(
+            text("Active Long and Short trading cycles", 12f, muted)
+        )
 
         val list = addCard(root, "ACTIVE CYCLES")
         list.addView(text("Loading active cycles...", 13f, muted))
@@ -350,7 +369,9 @@ class MainActivity : AppCompatActivity() {
 
             if (cycles.length() == 0) {
                 addSpace(list, 12)
-                list.addView(text("No active cycles found.", 13f, muted))
+                list.addView(
+                    text("No active cycles found.", 13f, muted)
+                )
             }
 
             for (i in 0 until cycles.length()) {
@@ -358,25 +379,39 @@ class MainActivity : AppCompatActivity() {
                 val id = cycle.optInt("id")
 
                 addSpace(list, 12)
-                list.addView(text(
-                    "${cycle.optString("symbol")}  |  " +
-                    cycle.optString("direction"),
-                    15f, yellow, true
-                ))
+
+                list.addView(
+                    text(
+                        "${cycle.optString("symbol")}  |  " +
+                        cycle.optString("direction"),
+                        15f, yellow, true
+                    )
+                )
+
                 addLabel(
-                    list, "Status",
+                    list,
+                    "Status",
                     cycle.optString("status")
                 )
+
                 addLabel(
-                    list, "Average Entry",
+                    list,
+                    "Average Entry",
                     cycle.optDouble("average_entry_price").toString()
                 )
+
                 addLabel(
-                    list, "Filled Quantity",
+                    list,
+                    "Filled Quantity",
                     cycle.optDouble("total_filled_quantity").toString()
                 )
 
-                val details = addButton(list, "VIEW CYCLE DETAILS", 0xFF263B56.toInt())
+                val details = addButton(
+                    list,
+                    "VIEW CYCLE DETAILS",
+                    0xFF263B56.toInt()
+                )
+
                 details.setOnClickListener {
                     cycleDetails(id)
                 }
@@ -384,17 +419,21 @@ class MainActivity : AppCompatActivity() {
         }
 
         addSpace(root, 10)
-        root.addView(text(
-            "Only cycles returned by the server are displayed.",
-            11f, muted
-        ))
+
+        root.addView(
+            text(
+                "Only cycles returned by the server are displayed.",
+                11f, muted
+            )
+        )
     }
 
     private fun cycleDetails(id: Int) {
         getJson("$baseUrl/cycles/$id") { json, error ->
             if (error != null || json == null) {
                 Toast.makeText(
-                    this, "Unable to load cycle details",
+                    this,
+                    "Unable to load cycle details",
                     Toast.LENGTH_LONG
                 ).show()
                 return@getJson
@@ -405,16 +444,27 @@ class MainActivity : AppCompatActivity() {
                 append("${json.optString("symbol")} ")
                 append("${json.optString("direction")}\n")
                 append("Status: ${json.optString("status")}\n")
-                append("Average: ${json.optDouble("average_entry_price")}\n")
-                append("Quantity: ${json.optDouble("total_filled_quantity")}\n")
-                append("Take Profit: ${json.optDouble("take_profit_price")}\n")
-                append("Re-entry: ${json.optDouble("reentry_price")}\n\n")
+                append(
+                    "Average: ${json.optDouble("average_entry_price")}\n"
+                )
+                append(
+                    "Quantity: ${json.optDouble("total_filled_quantity")}\n"
+                )
+                append(
+                    "Take Profit: ${json.optDouble("take_profit_price")}\n"
+                )
+                append(
+                    "Re-entry: ${json.optDouble("reentry_price")}\n\n"
+                )
 
-                val entries = json.optJSONArray("entries") ?: JSONArray()
+                val entries =
+                    json.optJSONArray("entries") ?: JSONArray()
+
                 append("ENTRIES\n")
 
                 for (i in 0 until entries.length()) {
                     val e = entries.getJSONObject(i)
+
                     append(
                         "${e.optString("type")} | " +
                         "${e.optString("status")} | " +
@@ -435,10 +485,12 @@ class MainActivity : AppCompatActivity() {
         val root = pageContainer()
 
         root.addView(text("Coin Settings", 23f, white, true))
-        root.addView(text(
-            "View saved settings for each trading pair",
-            12f, muted
-        ))
+        root.addView(
+            text(
+                "View saved settings for each trading pair",
+                12f, muted
+            )
+        )
 
         val box = addCard(root, "SELECT TRADING PAIR")
 
@@ -448,58 +500,128 @@ class MainActivity : AppCompatActivity() {
             android.R.layout.simple_spinner_dropdown_item,
             symbols
         )
+
         box.addView(spinner)
 
         val details = addCard(root, "SAVED CONFIGURATION")
-        details.addView(text("Select a coin to load its settings.", 13f, muted))
+        details.addView(
+            text("Select a coin to load its settings.", 13f, muted)
+        )
 
         fun loadSettings(symbol: String) {
             details.removeAllViews()
-            details.addView(text("$symbol SETTINGS", 15f, yellow, true))
+
+            details.addView(
+                text("$symbol SETTINGS", 15f, yellow, true)
+            )
+
             details.addView(text("Loading...", 13f, muted))
 
             getJson("$baseUrl/settings/$symbol") { json, error ->
                 details.removeAllViews()
-                details.addView(text("$symbol SETTINGS", 15f, yellow, true))
+
+                details.addView(
+                    text("$symbol SETTINGS", 15f, yellow, true)
+                )
 
                 if (error != null || json == null) {
-                    details.addView(text(
-                        "Settings could not be loaded.",
-                        13f, red
-                    ))
+                    details.addView(
+                        text(
+                            "Settings could not be loaded.",
+                            13f, red
+                        )
+                    )
                     return@getJson
                 }
 
                 addLabel(
-                    details, "LONG",
-                    if (json.optBoolean("enabled_long", true)) "ENABLED" else "DISABLED",
+                    details,
+                    "LONG",
+                    if (json.optBoolean("enabled_long", true))
+                        "ENABLED" else "DISABLED",
                     green
                 )
-                addLabel(
-                    details, "SHORT",
-                    if (json.optBoolean("enabled_short", true)) "ENABLED" else "DISABLED",
-                    green
-                )
-                addLabel(details, "Initial Margin", "${json.optDouble("initial_margin")} USDT")
-                addLabel(details, "Averaging Margin", "${json.optDouble("averaging_margin")} USDT")
-                addLabel(details, "Opposite Margin", "${json.optDouble("opposite_margin")} USDT")
-                addLabel(details, "Leverage", "${json.optInt("leverage")}x")
-                addLabel(details, "Take Profit", "${json.optDouble("tp_percent")}%")
-                addLabel(details, "Stop Loss", "${json.optDouble("sl_percent")}%")
-                addLabel(details, "Warning", "${json.optDouble("warning_percent")}%")
-                addLabel(details, "Opposite Entry", "${json.optDouble("opposite_percent")}%")
-                addLabel(details, "Averaging", "${json.optDouble("averaging_percent")}%")
-                addLabel(details, "Re-entry", "${json.optDouble("reentry_percent")}%")
 
-                details.addView(text(
-                    "Settings are currently view-only in the app.",
-                    11f, yellow
-                ))
+                addLabel(
+                    details,
+                    "SHORT",
+                    if (json.optBoolean("enabled_short", true))
+                        "ENABLED" else "DISABLED",
+                    green
+                )
+
+                addLabel(
+                    details,
+                    "Initial Margin",
+                    "${json.optDouble("initial_margin")} USDT"
+                )
+
+                addLabel(
+                    details,
+                    "Averaging Margin",
+                    "${json.optDouble("averaging_margin")} USDT"
+                )
+
+                addLabel(
+                    details,
+                    "Opposite Margin",
+                    "${json.optDouble("opposite_margin")} USDT"
+                )
+
+                addLabel(
+                    details,
+                    "Leverage",
+                    "${json.optInt("leverage")}x"
+                )
+
+                addLabel(
+                    details,
+                    "Take Profit",
+                    "${json.optDouble("tp_percent")}%"
+                )
+
+                addLabel(
+                    details,
+                    "Stop Loss",
+                    "${json.optDouble("sl_percent")}%"
+                )
+
+                addLabel(
+                    details,
+                    "Warning",
+                    "${json.optDouble("warning_percent")}%"
+                )
+
+                addLabel(
+                    details,
+                    "Opposite Entry",
+                    "${json.optDouble("opposite_percent")}%"
+                )
+
+                addLabel(
+                    details,
+                    "Averaging",
+                    "${json.optDouble("averaging_percent")}%"
+                )
+
+                addLabel(
+                    details,
+                    "Re-entry",
+                    "${json.optDouble("reentry_percent")}%"
+                )
+
+                details.addView(
+                    text(
+                        "Settings are currently view-only in the app.",
+                        11f, yellow
+                    )
+                )
             }
         }
 
         spinner.onItemSelectedListener =
             object : AdapterView.OnItemSelectedListener {
+
                 override fun onItemSelected(
                     parent: AdapterView<*>?,
                     view: View?,
@@ -510,7 +632,9 @@ class MainActivity : AppCompatActivity() {
                     loadSettings(selectedSymbol)
                 }
 
-                override fun onNothingSelected(parent: AdapterView<*>?) {}
+                override fun onNothingSelected(
+                    parent: AdapterView<*>?
+                ) {}
             }
     }
 
@@ -518,13 +642,18 @@ class MainActivity : AppCompatActivity() {
         val root = pageContainer()
 
         root.addView(text("Activity Center", 23f, white, true))
-        root.addView(text(
-            "Notifications, bot events and re-entry status",
-            12f, muted
-        ))
+
+        root.addView(
+            text(
+                "Notifications, bot events and re-entry status",
+                12f, muted
+            )
+        )
 
         val notifications = addCard(root, "NOTIFICATIONS")
-        notifications.addView(text("Loading notifications...", 13f, muted))
+        notifications.addView(
+            text("Loading notifications...", 13f, muted)
+        )
 
         val events = addCard(root, "BOT EVENTS")
         events.addView(text("Loading events...", 13f, muted))
@@ -532,9 +661,23 @@ class MainActivity : AppCompatActivity() {
         val reentries = addCard(root, "RE-ENTRY RECORDS")
         reentries.addView(text("Loading re-entries...", 13f, muted))
 
-        loadList("$baseUrl/notifications", notifications, "notifications")
-        loadList("$baseUrl/events", events, "events")
-        loadList("$baseUrl/reentries", reentries, "reentries")
+        loadList(
+            "$baseUrl/notifications",
+            notifications,
+            "notifications"
+        )
+
+        loadList(
+            "$baseUrl/events",
+            events,
+            "events"
+        )
+
+        loadList(
+            "$baseUrl/reentries",
+            reentries,
+            "reentries"
+        )
     }
 
     private fun loadList(
@@ -544,23 +687,30 @@ class MainActivity : AppCompatActivity() {
     ) {
         getJson(url) { json, error ->
             box.removeAllViews()
-            box.addView(text(arrayName.uppercase(), 15f, white, true))
+
+            box.addView(
+                text(arrayName.uppercase(), 15f, white, true)
+            )
 
             if (error != null || json == null) {
                 box.addView(text("Unable to load data.", 13f, red))
                 return@getJson
             }
 
-            val array = json.optJSONArray(arrayName) ?: JSONArray()
+            val array =
+                json.optJSONArray(arrayName) ?: JSONArray()
 
             if (array.length() == 0) {
                 addSpace(box, 10)
-                box.addView(text("No records available.", 13f, muted))
+                box.addView(
+                    text("No records available.", 13f, muted)
+                )
                 return@getJson
             }
 
             for (i in 0 until array.length()) {
                 val item = array.getJSONObject(i)
+
                 addSpace(box, 12)
 
                 val title = item.optString(
@@ -586,6 +736,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 val date = item.optString("created_at", "")
+
                 if (date.isNotBlank()) {
                     box.addView(text(date, 10f, muted))
                 }
@@ -597,36 +748,85 @@ class MainActivity : AppCompatActivity() {
         val root = pageContainer()
 
         root.addView(text("More", 23f, white, true))
-        root.addView(text(
-            "System information and additional sections",
-            12f, muted
-        ))
+
+        root.addView(
+            text(
+                "System information and additional sections",
+                12f, muted
+            )
+        )
+
+        // MANUAL ENTRY
+        val manual = addCard(
+            root,
+            "MANUAL TRADING",
+            "Prepare your initial entry configuration"
+        )
+
+        addActionButton(manual, "OPEN MANUAL ENTRY") {
+            val intent = Intent(
+                this,
+                ManualEntryActivity::class.java
+            )
+            startActivity(intent)
+        }
 
         val system = addCard(root, "SYSTEM INFORMATION")
-        addLabel(system, "Application", "Binance Futures Bot")
-        addLabel(system, "Version", "1.0")
-        addLabel(system, "Trading Environment", "Testnet only", green)
-        addLabel(system, "Live Trading", "Disabled", red)
+
+        addLabel(
+            system,
+            "Application",
+            "Binance Futures Bot"
+        )
+
+        addLabel(
+            system,
+            "Version",
+            "1.0"
+        )
+
+        addLabel(
+            system,
+            "Trading Environment",
+            "Testnet only",
+            green
+        )
+
+        addLabel(
+            system,
+            "Live Trading",
+            "Disabled",
+            red
+        )
 
         val orders = addCard(root, "ORDER MANAGEMENT")
-        orders.addView(text(
-            "Order history screen is reserved. " +
-            "A read-only order history API is required before real order records can be displayed.",
-            12f, muted
-        ))
+
+        orders.addView(
+            text(
+                "Order history screen is reserved. " +
+                "A read-only order history API is required before real order records can be displayed.",
+                12f, muted
+            )
+        )
 
         val history = addCard(root, "TRADE HISTORY")
-        history.addView(text(
-            "Closed cycle history will appear here after a dedicated history API is added.",
-            12f, muted
-        ))
+
+        history.addView(
+            text(
+                "Closed cycle history will appear here after a dedicated history API is added.",
+                12f, muted
+            )
+        )
 
         val safety = addCard(root, "TRADING SAFETY")
-        safety.addView(text(
-            "Manual entry and all trading actions remain disabled. " +
-            "This app screen does not submit orders.",
-            12f, yellow
-        ))
+
+        safety.addView(
+            text(
+                "Manual entry and all trading actions remain disabled. " +
+                "This app screen does not submit orders.",
+                12f, yellow
+            )
+        )
     }
 
     private fun addButton(
@@ -635,22 +835,27 @@ class MainActivity : AppCompatActivity() {
         color: Int
     ): Button {
         val button = Button(this)
+
         button.text = label
         button.textSize = 12f
+
         button.setTextColor(
             if (color == yellow) Color.BLACK else white
         )
+
         button.background = rounded(color, 12)
         button.isAllCaps = false
 
         parent.addView(
             button,
             LinearLayout.LayoutParams(
-                -1, dp(48)
+                -1,
+                dp(48)
             ).apply {
                 topMargin = dp(8)
             }
         )
+
         return button
     }
 
@@ -659,8 +864,15 @@ class MainActivity : AppCompatActivity() {
         label: String,
         action: () -> Unit
     ) {
-        val button = addButton(parent, label, 0xFF263B56.toInt())
-        button.setOnClickListener { action() }
+        val button = addButton(
+            parent,
+            label,
+            0xFF263B56.toInt()
+        )
+
+        button.setOnClickListener {
+            action()
+        }
     }
 
     private fun getJson(
@@ -673,23 +885,42 @@ class MainActivity : AppCompatActivity() {
             .build()
 
         client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
+
+            override fun onFailure(
+                call: Call,
+                e: IOException
+            ) {
                 runOnUiThread {
-                    callback(null, e.message ?: "Network error")
+                    callback(
+                        null,
+                        e.message ?: "Network error"
+                    )
                 }
             }
 
-            override fun onResponse(call: Call, response: Response) {
+            override fun onResponse(
+                call: Call,
+                response: Response
+            ) {
                 val body = response.body?.string()
 
                 runOnUiThread {
                     if (!response.isSuccessful || body == null) {
-                        callback(null, "HTTP ${response.code}")
+                        callback(
+                            null,
+                            "HTTP ${response.code}"
+                        )
                     } else {
                         try {
-                            callback(JSONObject(body), null)
+                            callback(
+                                JSONObject(body),
+                                null
+                            )
                         } catch (e: Exception) {
-                            callback(null, "Invalid server response")
+                            callback(
+                                null,
+                                "Invalid server response"
+                            )
                         }
                     }
                 }
