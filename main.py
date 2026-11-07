@@ -1,5 +1,6 @@
 import asyncio
 import logging
+
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -9,7 +10,12 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from database import engine, Base, get_db
-from models import TradingCycle, CycleEntry
+
+from models import (
+    TradingCycle,
+    CycleEntry,
+)
+
 from binance_client import binance_client
 from engine import trading_engine
 from order_manager import order_manager
@@ -18,6 +24,7 @@ from api_routes import router
 
 
 logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,22 +33,28 @@ Base.metadata.create_all(bind=engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(trading_engine.start())
 
-    logger.info("Application started")
+    task = asyncio.create_task(
+        trading_engine.start()
+    )
+
+    logger.info("Application started.")
 
     yield
 
     trading_engine.stop()
+
     task.cancel()
 
     try:
         await task
+
     except asyncio.CancelledError:
         pass
 
     binance_client.close()
-    logger.info("Application stopped")
+
+    logger.info("Application stopped.")
 
 
 app = FastAPI(
@@ -55,6 +68,7 @@ app.include_router(router)
 
 
 class InitialEntryRequest(BaseModel):
+
     symbol: str
 
     direction: str
@@ -72,6 +86,7 @@ class InitialEntryRequest(BaseModel):
 
 @app.get("/")
 def read_root():
+
     return {
         "project": settings.PROJECT_NAME,
         "version": settings.VERSION,
@@ -82,14 +97,20 @@ def read_root():
 
 
 @app.get("/health")
-def health_check(db: Session = Depends(get_db)):
+def health_check(
+    db: Session = Depends(get_db),
+):
+
     try:
-        db.execute(
-            __import__("sqlalchemy").text("SELECT 1")
-        )
+
+        from sqlalchemy import text
+
+        db.execute(text("SELECT 1"))
+
         database_status = "connected"
 
     except Exception:
+
         database_status = "disconnected"
 
     return {
@@ -107,9 +128,11 @@ def health_check(db: Session = Depends(get_db)):
 
 @app.get(f"{settings.API_PREFIX}/balance")
 def get_balance():
+
     result = binance_client.verify_connection()
 
     if result.get("status") != "Connected":
+
         raise HTTPException(
             status_code=503,
             detail=result.get(
@@ -131,15 +154,44 @@ def create_initial_entry(
     request: InitialEntryRequest,
     db: Session = Depends(get_db),
 ):
+
     new_cycle = None
 
     try:
+
         validated = risk_manager.validate_initial_entry(
             symbol=request.symbol,
             direction=request.direction,
             margin=request.initial_margin,
             leverage=request.leverage,
         )
+
+        # اسی Coin اور اسی Direction میں پہلے سے فعال
+        # Cycle ہو تو نئی Initial Entry کی اجازت نہیں۔
+        existing_cycle = (
+            db.query(TradingCycle)
+            .filter(
+                TradingCycle.symbol == validated["symbol"],
+                TradingCycle.direction == validated["direction"],
+                TradingCycle.status.in_([
+                    "ACTIVE",
+                    "CLOSING_TP",
+                    "ORDER_UNCONFIRMED",
+                ]),
+            )
+            .first()
+        )
+
+        if existing_cycle:
+
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "An active or unconfirmed cycle already exists "
+                    "for this symbol and direction. "
+                    "Resolve it before creating another entry."
+                ),
+            )
 
         new_cycle = TradingCycle(
             symbol=validated["symbol"],
@@ -158,6 +210,7 @@ def create_initial_entry(
         )
 
         db.add(new_cycle)
+
         db.commit()
         db.refresh(new_cycle)
 
@@ -165,6 +218,11 @@ def create_initial_entry(
             db,
             new_cycle,
         )
+
+        if result.get("order_status") == "UNKNOWN":
+
+            new_cycle.status = "ORDER_UNCONFIRMED"
+            db.commit()
 
         return {
             "success": bool(result.get("success")),
@@ -177,7 +235,11 @@ def create_initial_entry(
             "order": result,
         }
 
+    except HTTPException:
+        raise
+
     except ValueError as error:
+
         db.rollback()
 
         raise HTTPException(
@@ -186,7 +248,37 @@ def create_initial_entry(
         )
 
     except RuntimeError as error:
+
         db.rollback()
+
+        if new_cycle is not None:
+
+            saved_cycle = (
+                db.query(TradingCycle)
+                .filter(
+                    TradingCycle.id == new_cycle.id
+                )
+                .first()
+            )
+
+            if saved_cycle:
+
+                unknown_entry = (
+                    db.query(CycleEntry)
+                    .filter(
+                        CycleEntry.cycle_id == saved_cycle.id,
+                        CycleEntry.status == "UNKNOWN",
+                    )
+                    .first()
+                )
+
+                saved_cycle.status = (
+                    "ORDER_UNCONFIRMED"
+                    if unknown_entry
+                    else "ERROR"
+                )
+
+                db.commit()
 
         raise HTTPException(
             status_code=503,
@@ -194,20 +286,42 @@ def create_initial_entry(
         )
 
     except Exception:
+
         db.rollback()
 
-        logger.exception("Initial entry request failed")
+        logger.exception(
+            "Initial entry request failed."
+        )
 
         if new_cycle is not None:
+
             try:
+
                 saved_cycle = (
                     db.query(TradingCycle)
-                    .filter(TradingCycle.id == new_cycle.id)
+                    .filter(
+                        TradingCycle.id == new_cycle.id
+                    )
                     .first()
                 )
 
                 if saved_cycle:
-                    saved_cycle.status = "ERROR"
+
+                    unknown_entry = (
+                        db.query(CycleEntry)
+                        .filter(
+                            CycleEntry.cycle_id == saved_cycle.id,
+                            CycleEntry.status == "UNKNOWN",
+                        )
+                        .first()
+                    )
+
+                    saved_cycle.status = (
+                        "ORDER_UNCONFIRMED"
+                        if unknown_entry
+                        else "ERROR"
+                    )
+
                     db.commit()
 
             except Exception:
@@ -215,7 +329,10 @@ def create_initial_entry(
 
         raise HTTPException(
             status_code=500,
-            detail="Unable to process initial entry. Check exchange order history before retrying.",
+            detail=(
+                "Unable to process initial entry. "
+                "Check exchange order history before retrying."
+            ),
         )
 
 
@@ -223,10 +340,19 @@ def create_initial_entry(
 def get_active_cycles(
     db: Session = Depends(get_db),
 ):
+
     cycles = (
         db.query(TradingCycle)
-        .filter(TradingCycle.status == "ACTIVE")
-        .order_by(TradingCycle.created_at.desc())
+        .filter(
+            TradingCycle.status.in_([
+                "ACTIVE",
+                "CLOSING_TP",
+                "ORDER_UNCONFIRMED",
+            ])
+        )
+        .order_by(
+            TradingCycle.created_at.desc()
+        )
         .all()
     )
 
@@ -256,13 +382,17 @@ def get_cycle(
     cycle_id: int,
     db: Session = Depends(get_db),
 ):
+
     cycle = (
         db.query(TradingCycle)
-        .filter(TradingCycle.id == cycle_id)
+        .filter(
+            TradingCycle.id == cycle_id
+        )
         .first()
     )
 
     if not cycle:
+
         raise HTTPException(
             status_code=404,
             detail="Trading cycle not found.",
@@ -270,7 +400,9 @@ def get_cycle(
 
     entries = (
         db.query(CycleEntry)
-        .filter(CycleEntry.cycle_id == cycle.id)
+        .filter(
+            CycleEntry.cycle_id == cycle.id
+        )
         .all()
     )
 
