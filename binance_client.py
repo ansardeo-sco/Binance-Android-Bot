@@ -15,6 +15,20 @@ class BinanceFuturesClient:
 
     def __init__(self):
 
+        # Production endpoint پر Client بنانا بھی منع ہے۔
+        if not settings.BINANCE_USE_TESTNET:
+            raise RuntimeError(
+                "Production Binance access is blocked. "
+                "Set BINANCE_USE_TESTNET=true."
+            )
+
+        if settings.LIVE_TRADING_ENABLED:
+            raise RuntimeError(
+                "Live trading is disabled."
+            )
+
+        settings.validate_trading_mode()
+
         self.exchange = ccxt.binance({
             "apiKey": settings.BINANCE_API_KEY,
             "secret": settings.BINANCE_API_SECRET,
@@ -26,21 +40,23 @@ class BinanceFuturesClient:
             },
         })
 
-        if settings.BINANCE_USE_TESTNET:
-            self.exchange.set_sandbox_mode(True)
+        # ہمیشہ Testnet استعمال ہوگا۔
+        self.exchange.set_sandbox_mode(True)
 
         self._markets_loaded = False
 
     def _require_testnet(self):
 
-        if not settings.BINANCE_USE_TESTNET:
-            raise RuntimeError(
-                "This development version only permits Binance Testnet."
-            )
-
         settings.validate_trading_mode()
 
+        if not settings.BINANCE_USE_TESTNET:
+            raise RuntimeError(
+                "Binance Testnet is required."
+            )
+
     def _load_markets_sync(self):
+
+        self._require_testnet()
 
         if not self._markets_loaded:
             self.exchange.load_markets()
@@ -110,6 +126,8 @@ class BinanceFuturesClient:
 
     def _fetch_mark_price_sync(self, symbol: str) -> float:
 
+        self._require_testnet()
+
         market = self._validate_symbol(symbol)
 
         response = self.exchange.request(
@@ -161,11 +179,12 @@ class BinanceFuturesClient:
             return {
                 "status": "Disconnected",
                 "error": "Binance API credentials are not configured.",
-                "testnet": settings.BINANCE_USE_TESTNET,
-                "trading_mode": settings.trading_mode,
+                "testnet": True,
+                "trading_mode": "TESTNET",
             }
 
         try:
+
             self._require_testnet()
 
             balance = self.exchange.fetch_balance({
@@ -190,8 +209,8 @@ class BinanceFuturesClient:
 
             return {
                 "status": "Disconnected",
-                "testnet": settings.BINANCE_USE_TESTNET,
-                "trading_mode": settings.trading_mode,
+                "testnet": True,
+                "trading_mode": "TESTNET",
                 "error": str(error),
             }
 
