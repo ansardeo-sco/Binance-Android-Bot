@@ -16,6 +16,7 @@ from settings_manager import settings_manager
 
 
 logger = logging.getLogger(__name__)
+EPSILON = 0.00000001
 
 
 class ReentryManager:
@@ -26,6 +27,14 @@ class ReentryManager:
         "ORDER_UNCONFIRMED",
     ]
 
+    TERMINAL_ORDER_STATUSES = {
+        "FILLED",
+        "CANCELLED",
+        "CANCELLED_PARTIAL",
+        "REJECTED",
+        "EXPIRED",
+    }
+
     @staticmethod
     def _direction_enabled(symbol_settings, direction):
         if direction == "LONG":
@@ -35,6 +44,15 @@ class ReentryManager:
             return bool(symbol_settings["enabled_short"])
 
         return False
+
+    @staticmethod
+    def _has_confirmed_entry_fill(entries):
+        # Historical fill remains proof of execution even if
+        # the position was subsequently closed.
+        return any(
+            float(entry.filled_quantity or 0) > EPSILON
+            for entry in entries
+        )
 
     def _recover_incomplete_records(self, db):
 
@@ -57,57 +75,118 @@ class ReentryManager:
                 db.commit()
                 continue
 
+            cycle_id = record.new_cycle_id
+
             orders = (
                 db.query(CycleOrder)
-                .filter(
-                    CycleOrder.cycle_id == record.new_cycle_id
-                )
+                .filter(CycleOrder.cycle_id == cycle_id)
                 .all()
             )
 
             entries = (
                 db.query(CycleEntry)
-                .filter(
-                    CycleEntry.cycle_id == record.new_cycle_id
-                )
+                .filter(CycleEntry.cycle_id == cycle_id)
                 .all()
             )
 
-            # کوئی Entry یا Order ریکارڈ نہیں:
-            # order_manager نے ابھی Exchange request نہیں بھیجی۔
+            cycle = (
+                db.query(TradingCycle)
+                .filter(TradingCycle.id == cycle_id)
+                .first()
+            )
+
+            # No order and no entry: no exchange request was recorded.
+            # Safe to retry.
             if not orders and not entries:
 
-                failed_cycle = (
-                    db.query(TradingCycle)
-                    .filter(
-                        TradingCycle.id == record.new_cycle_id
-                    )
-                    .first()
-                )
-
-                if failed_cycle:
-                    failed_cycle.status = "ENTRY_FAILED"
+                if cycle:
+                    cycle.status = "ENTRY_FAILED"
 
                 record.status = "WAITING"
                 record.new_cycle_id = None
+
                 db.commit()
                 continue
 
-            # UNKNOWN آرڈر کی صورت میں دوبارہ آرڈر ہرگز نہ بھیجیں۔
-            if any(order.status == "UNKNOWN" for order in orders):
+            entries_by_id = {
+                entry.id: entry for entry in entries
+            }
+
+            # Missing entry/order relationship means the ledger
+            # is inconsistent. Never send another order automatically.
+            inconsistent = any(
+                order.entry_id is None
+                or order.entry_id not in entries_by_id
+                for order in orders
+            ) or (bool(entries) and not orders)
+
+            if inconsistent or not orders:
+
                 record.status = "ORDER_UNCONFIRMED"
+
+                if cycle:
+                    cycle.status = "ORDER_UNCONFIRMED"
+
                 db.commit()
                 continue
 
-            # Order موجود ہے اور UNKNOWN نہیں:
-            # یہ کوشش استعمال ہو چکی ہے؛ دوبارہ آرڈر نہ بھیجیں۔
-            if orders:
+            # Open, partially-filled or UNKNOWN orders must be
+            # reconciled before any retry.
+            unresolved = any(
+                str(order.status or "").upper()
+                not in self.TERMINAL_ORDER_STATUSES
+                for order in orders
+            )
+
+            if unresolved:
+
+                record.status = "ORDER_UNCONFIRMED"
+
+                if cycle:
+                    cycle.status = "ORDER_UNCONFIRMED"
+
+                db.commit()
+                continue
+
+            has_order_fill = any(
+                float(order.filled_quantity or 0) > EPSILON
+                for order in orders
+            )
+
+            has_entry_fill = self._has_confirmed_entry_fill(entries)
+
+            # A confirmed fill means the re-entry was genuinely opened.
+            if has_order_fill and has_entry_fill:
+
                 record.status = "TRIGGERED"
 
                 if not record.triggered_at:
                     record.triggered_at = datetime.now(timezone.utc)
 
                 db.commit()
+                continue
+
+            # Exchange and local ledger disagree about execution.
+            # Keep it locked for reconciliation.
+            if has_order_fill != has_entry_fill:
+
+                record.status = "ORDER_UNCONFIRMED"
+
+                if cycle:
+                    cycle.status = "ORDER_UNCONFIRMED"
+
+                db.commit()
+                continue
+
+            # Every order is terminal and zero-fill.
+            # It is now safe to retry this same re-entry record.
+            if cycle:
+                cycle.status = "ENTRY_FAILED"
+
+            record.status = "WAITING"
+            record.new_cycle_id = None
+
+            db.commit()
 
     async def process_waiting(self, db):
 
@@ -128,6 +207,7 @@ class ReentryManager:
             new_cycle_id = None
 
             try:
+
                 old_cycle = (
                     db.query(TradingCycle)
                     .filter(TradingCycle.id == record.cycle_id)
@@ -232,6 +312,7 @@ class ReentryManager:
                 db.commit()
 
                 try:
+
                     result = order_manager.place_initial_entry(
                         db,
                         new_cycle,
@@ -249,12 +330,21 @@ class ReentryManager:
                         .first()
                     )
 
-                    order_status = result.get("order_status")
+                    filled_quantity = float(
+                        (result or {}).get("filled_quantity") or 0
+                    )
 
+                    order_status = str(
+                        (result or {}).get("order_status") or "UNKNOWN"
+                    ).upper()
+
+                    # Only a confirmed non-zero fill consumes re-entry.
                     if (
-                        result.get("success")
+                        (result or {}).get("success")
+                        and filled_quantity > EPSILON
                         and order_status != "UNKNOWN"
                     ):
+
                         if saved_record:
                             saved_record.status = "TRIGGERED"
                             saved_record.triggered_at = (
@@ -271,6 +361,7 @@ class ReentryManager:
                         })
 
                     else:
+
                         if saved_cycle:
                             saved_cycle.status = "ORDER_UNCONFIRMED"
 
@@ -286,6 +377,7 @@ class ReentryManager:
                         })
 
                 except Exception as error:
+
                     db.rollback()
 
                     saved_record = (
@@ -321,13 +413,16 @@ class ReentryManager:
                     )
 
                     if saved_record:
+
                         if exchange_request_may_exist:
                             saved_record.status = "ORDER_UNCONFIRMED"
+
                         else:
                             saved_record.status = "WAITING"
                             saved_record.new_cycle_id = None
 
                     if saved_cycle:
+
                         saved_cycle.status = (
                             "ORDER_UNCONFIRMED"
                             if exchange_request_may_exist
@@ -352,6 +447,7 @@ class ReentryManager:
                     })
 
             except Exception:
+
                 db.rollback()
 
                 logger.exception(
