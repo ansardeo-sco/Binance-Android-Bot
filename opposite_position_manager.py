@@ -1,7 +1,7 @@
-
 from config import settings
-from models import TradingCycle, CycleEvent, CycleOrder, CycleEntry
+from models import TradingCycle, CycleEvent, CycleOrder
 from automated_entry_manager import automated_entry_manager
+from settings_manager import settings_manager
 
 
 OPEN_ORDER_STATUSES = [
@@ -18,6 +18,17 @@ ACTIVE_CYCLE_STATUSES = [
 
 
 class OppositePositionManager:
+
+    @staticmethod
+    def _direction_enabled(symbol_settings, direction):
+
+        if direction == "LONG":
+            return bool(symbol_settings["enabled_long"])
+
+        if direction == "SHORT":
+            return bool(symbol_settings["enabled_short"])
+
+        return False
 
     def process_cycle(self, db, cycle, adverse_percent):
 
@@ -52,6 +63,40 @@ class OppositePositionManager:
             "SHORT" if cycle.direction == "LONG" else "LONG"
         )
 
+        # موجودہ کوائن کی تازہ Settings حاصل کریں۔
+        symbol_settings = settings_manager.get_symbol_settings(
+            db,
+            cycle.symbol,
+        )
+
+        # جس سمت کی اجازت بند ہو، اس میں انٹری نہیں ہوگی۔
+        if not self._direction_enabled(
+            symbol_settings,
+            opposite_direction,
+        ):
+
+            cycle.opposite_triggered = True
+            db.commit()
+
+            self._record_event(
+                db,
+                cycle,
+                adverse_percent,
+                "OPPOSITE_SKIPPED",
+                "SKIPPED",
+                (
+                    f"{opposite_direction} trading is disabled "
+                    "in the current symbol settings."
+                ),
+            )
+
+            return {
+                "triggered": False,
+                "message": (
+                    f"{opposite_direction} trading is disabled."
+                ),
+            }
+
         existing = (
             db.query(TradingCycle)
             .filter(
@@ -63,6 +108,7 @@ class OppositePositionManager:
         )
 
         if existing:
+
             cycle.opposite_triggered = True
             cycle.opposite_cycle_id = existing.id
             db.commit()
@@ -82,7 +128,6 @@ class OppositePositionManager:
                 "opposite_cycle_id": existing.id,
             }
 
-        # ایک Symbol کے لیے زیادہ سے زیادہ Active Cycles کی حد۔
         active_count = (
             db.query(TradingCycle)
             .filter(
@@ -93,6 +138,7 @@ class OppositePositionManager:
         )
 
         if active_count >= settings.MAX_ACTIVE_CYCLES_PER_SYMBOL:
+
             cycle.opposite_triggered = True
             db.commit()
 
@@ -110,21 +156,26 @@ class OppositePositionManager:
                 "message": "Maximum active cycles limit reached.",
             }
 
-        # نئی مخالف سمت کی Cycle میں پرانی Cycle کی Settings محفوظ کریں۔
+        # نئی Cycle میں موجودہ کوائن کی Settings محفوظ کریں۔
         opposite_cycle = TradingCycle(
             symbol=cycle.symbol,
             direction=opposite_direction,
             status="ACTIVE",
-            initial_margin=cycle.opposite_margin,
-            averaging_margin=cycle.averaging_margin,
-            opposite_margin=cycle.opposite_margin,
-            leverage=cycle.leverage,
-            tp_percent=cycle.tp_percent,
-            sl_percent=cycle.sl_percent,
-            warning_percent=cycle.warning_percent,
-            opposite_percent=cycle.opposite_percent,
-            averaging_percent=cycle.averaging_percent,
-            reentry_percent=cycle.reentry_percent,
+
+            # مخالف سمت کی پہلی انٹری Opposite Margin سے ہوگی۔
+            initial_margin=symbol_settings["opposite_margin"],
+            averaging_margin=symbol_settings["averaging_margin"],
+            opposite_margin=symbol_settings["opposite_margin"],
+
+            leverage=symbol_settings["leverage"],
+
+            tp_percent=symbol_settings["tp_percent"],
+            sl_percent=symbol_settings["sl_percent"],
+
+            warning_percent=symbol_settings["warning_percent"],
+            opposite_percent=symbol_settings["opposite_percent"],
+            averaging_percent=symbol_settings["averaging_percent"],
+            reentry_percent=symbol_settings["reentry_percent"],
         )
 
         db.add(opposite_cycle)
@@ -136,11 +187,12 @@ class OppositePositionManager:
         db.commit()
 
         try:
+
             result = automated_entry_manager.place_entry(
                 db=db,
                 cycle=opposite_cycle,
                 entry_type="OPPOSITE",
-                margin=cycle.opposite_margin,
+                margin=opposite_cycle.initial_margin,
             )
 
             self._record_event(
@@ -159,6 +211,7 @@ class OppositePositionManager:
             }
 
         except Exception:
+
             db.rollback()
 
             saved_cycle = (
@@ -177,13 +230,19 @@ class OppositePositionManager:
                 adverse_percent,
                 "OPPOSITE_ORDER",
                 "UNKNOWN",
-                "Opposite order could not be confirmed. Reconciliation required.",
+                (
+                    "Opposite order could not be confirmed. "
+                    "Reconciliation required."
+                ),
             )
 
             return {
                 "triggered": False,
                 "opposite_cycle_id": opposite_cycle.id,
-                "message": "Opposite order status is unknown. Reconciliation required.",
+                "message": (
+                    "Opposite order status is unknown. "
+                    "Reconciliation required."
+                ),
             }
 
     @staticmethod
@@ -195,6 +254,7 @@ class OppositePositionManager:
         status,
         message,
     ):
+
         if event_type == "OPPOSITE_SKIPPED":
             key = f"cycle-{cycle.id}-opposite-skipped"
         else:
