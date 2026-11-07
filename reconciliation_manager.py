@@ -15,22 +15,21 @@ class ReconciliationManager:
 
     @staticmethod
     def _symbol_map(exchange):
+
         mapping = {}
 
         for raw_symbol in settings.ALLOWED_SYMBOLS:
-            market = exchange.market(raw_symbol)
 
-            unified_symbol = market.get("symbol")
+            unified_symbol = binance_client.get_exchange_symbol(
+                raw_symbol
+            )
 
-            if not unified_symbol:
-                raise RuntimeError(
-                    f"Could not resolve exchange symbol: {raw_symbol}"
-                )
+            market = exchange.market(unified_symbol)
+
+            market_id = market.get("id")
 
             mapping[raw_symbol.upper()] = unified_symbol
             mapping[unified_symbol.upper()] = unified_symbol
-
-            market_id = market.get("id")
 
             if market_id:
                 mapping[str(market_id).upper()] = unified_symbol
@@ -42,7 +41,9 @@ class ReconciliationManager:
         db = SessionLocal()
 
         try:
+
             exchange = binance_client.exchange
+
             binance_client._load_markets_sync()
 
             symbol_map = self._symbol_map(exchange)
@@ -52,7 +53,6 @@ class ReconciliationManager:
                 for raw in settings.ALLOWED_SYMBOLS
             })
 
-            # Do not alter local snapshots unless the exchange request succeeds.
             positions = exchange.fetch_positions(symbols)
 
             if positions is None:
@@ -65,12 +65,15 @@ class ReconciliationManager:
 
             existing_records = (
                 db.query(ExchangePosition)
-                .filter(ExchangePosition.symbol.in_(symbols))
+                .filter(
+                    ExchangePosition.symbol.in_(symbols)
+                )
                 .all()
             )
 
-            # Reset only after a successful exchange response.
+            # Exchange response کامیاب ہونے کے بعد ہی پرانا snapshot reset کریں۔
             for record in existing_records:
+
                 record.exchange_quantity = 0.0
                 record.unrealized_pnl = 0.0
                 record.last_synced_at = now
@@ -87,7 +90,9 @@ class ReconciliationManager:
                 if not raw_symbol:
                     continue
 
-                symbol = symbol_map.get(str(raw_symbol).upper())
+                symbol = symbol_map.get(
+                    str(raw_symbol).upper()
+                )
 
                 if not symbol:
                     logger.warning(
@@ -101,33 +106,36 @@ class ReconciliationManager:
                 if contracts is None:
                     contracts = info.get("positionAmt", 0)
 
-                signed_quantity = float(contracts or 0)
-                quantity = abs(signed_quantity)
+                quantity = abs(float(contracts or 0))
 
                 position_side = str(
-                    info.get("positionSide")
-                    or ""
+                    info.get("positionSide") or ""
                 ).upper()
 
                 if position_side == "BOTH":
+
                     if quantity > 0:
                         raise RuntimeError(
                             "Binance reports one-way position mode (BOTH). "
-                            "This bot requires Hedge Mode with LONG and SHORT sides."
+                            "This bot requires Hedge Mode."
                         )
+
                     continue
 
                 if position_side not in ("LONG", "SHORT"):
+
                     unified_side = str(
                         position.get("side") or ""
                     ).upper()
 
                     if unified_side in ("LONG", "SHORT"):
                         position_side = unified_side
+
                     elif quantity > 0:
                         raise RuntimeError(
                             f"Could not determine position side for {symbol}."
                         )
+
                     else:
                         continue
 
@@ -143,11 +151,13 @@ class ReconciliationManager:
                 )
 
                 if not record:
+
                     record = ExchangePosition(
                         symbol=symbol,
                         direction=position_side,
                         exchange_position_key=position_key,
                     )
+
                     db.add(record)
 
                 entry_price = position.get("entryPrice")
@@ -195,9 +205,13 @@ class ReconciliationManager:
             }
 
         except Exception:
+
             db.rollback()
 
-            logger.exception("Position reconciliation failed.")
+            logger.exception(
+                "Position reconciliation failed."
+            )
+
             raise
 
         finally:
