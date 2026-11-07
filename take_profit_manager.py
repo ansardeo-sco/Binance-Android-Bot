@@ -1,4 +1,4 @@
-from models import CycleEntry
+from models import CycleEntry, CycleOrder
 from close_order_manager import close_order_manager
 
 
@@ -12,6 +12,26 @@ class TakeProfitManager:
                 "message": "Cycle is not active.",
             }
 
+        pending_close = (
+            db.query(CycleOrder)
+            .filter(
+                CycleOrder.cycle_id == cycle.id,
+                CycleOrder.reduce_position.is_(True),
+                CycleOrder.status.in_([
+                    "PENDING",
+                    "PARTIALLY_FILLED",
+                    "UNKNOWN",
+                ]),
+            )
+            .first()
+        )
+
+        if pending_close:
+            return {
+                "triggered": False,
+                "message": "A closing order is already pending or uncertain.",
+            }
+
         entries = (
             db.query(CycleEntry)
             .filter(
@@ -21,6 +41,7 @@ class TakeProfitManager:
                     "PARTIALLY_FILLED",
                 ]),
                 CycleEntry.remaining_quantity > 0,
+                CycleEntry.entry_price.isnot(None),
             )
             .all()
         )
@@ -37,23 +58,16 @@ class TakeProfitManager:
             }
 
         weighted_value = sum(
-            float(entry.entry_price or 0)
+            float(entry.entry_price)
             * float(entry.remaining_quantity or 0)
             for entry in entries
         )
-
-        if weighted_value <= 0:
-            return {
-                "triggered": False,
-                "message": "Average entry price unavailable.",
-            }
 
         average_price = weighted_value / total_quantity
 
         if cycle.direction == "LONG":
             profit_percent = (
-                (current_price - average_price)
-                / average_price
+                (current_price - average_price) / average_price
             ) * 100
 
             target_price = average_price * (
@@ -62,8 +76,7 @@ class TakeProfitManager:
 
         elif cycle.direction == "SHORT":
             profit_percent = (
-                (average_price - current_price)
-                / average_price
+                (average_price - current_price) / average_price
             ) * 100
 
             target_price = average_price * (
@@ -88,6 +101,10 @@ class TakeProfitManager:
                 "profit_percent": profit_percent,
                 "target_price": target_price,
             }
+
+        # Latch the cycle to prevent duplicate TP submissions.
+        cycle.status = "CLOSING_TP"
+        db.commit()
 
         results = []
 
