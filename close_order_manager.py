@@ -1,3 +1,4 @@
+
 import logging
 import uuid
 import threading
@@ -8,6 +9,13 @@ from models import CycleEntry, CycleOrder
 
 
 logger = logging.getLogger(__name__)
+
+
+OPEN_CLOSE_STATUSES = [
+    "PENDING",
+    "PARTIALLY_FILLED",
+    "UNKNOWN",
+]
 
 
 class CloseOrderManager:
@@ -46,16 +54,13 @@ class CloseOrderManager:
                     "entry_id": entry.id,
                 }
 
+            # ایک Cycle میں ایک وقت میں صرف ایک Close Order۔
             pending_close = (
                 db.query(CycleOrder)
                 .filter(
-                    CycleOrder.entry_id == entry.id,
+                    CycleOrder.cycle_id == entry.cycle_id,
                     CycleOrder.reduce_position.is_(True),
-                    CycleOrder.status.in_([
-                        "PENDING",
-                        "PARTIALLY_FILLED",
-                        "UNKNOWN",
-                    ]),
+                    CycleOrder.status.in_(OPEN_CLOSE_STATUSES),
                 )
                 .first()
             )
@@ -63,7 +68,7 @@ class CloseOrderManager:
             if pending_close:
                 return {
                     "success": False,
-                    "message": "A closing order is already pending.",
+                    "message": "A closing order is already pending for this cycle.",
                     "entry_id": entry.id,
                     "order_id": pending_close.id,
                 }
@@ -161,8 +166,6 @@ class CloseOrderManager:
                     str(order_id) if order_id else None
                 )
 
-                # Filled quantity is updated only by order_status_manager.
-                # This prevents the same fill being deducted twice.
                 order_record.status = (
                     "PENDING" if order_id else "UNKNOWN"
                 )
