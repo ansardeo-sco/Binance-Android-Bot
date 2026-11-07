@@ -12,6 +12,12 @@ class StopLossManager:
                 "message": "Cycle is not active.",
             }
 
+        if current_price is None or float(current_price) <= 0:
+            return {
+                "processed": False,
+                "message": "Invalid market price.",
+            }
+
         entries = (
             db.query(CycleEntry)
             .filter(
@@ -33,8 +39,16 @@ class StopLossManager:
                 continue
 
             entry_price = float(entry.entry_price)
+            stop_percent = float(entry.stop_loss_percent or 0)
 
-            if cycle.direction == "LONG":
+            if stop_percent <= 0:
+                continue
+
+            direction = str(
+                entry.direction or cycle.direction
+            ).upper()
+
+            if direction == "LONG":
 
                 loss_percent = (
                     (entry_price - current_price)
@@ -42,10 +56,10 @@ class StopLossManager:
                 ) * 100
 
                 stop_price = entry_price * (
-                    1 - entry.stop_loss_percent / 100
+                    1 - stop_percent / 100
                 )
 
-            elif cycle.direction == "SHORT":
+            elif direction == "SHORT":
 
                 loss_percent = (
                     (current_price - entry_price)
@@ -53,7 +67,7 @@ class StopLossManager:
                 ) * 100
 
                 stop_price = entry_price * (
-                    1 + entry.stop_loss_percent / 100
+                    1 + stop_percent / 100
                 )
 
             else:
@@ -61,7 +75,7 @@ class StopLossManager:
 
             entry.stop_loss_price = stop_price
 
-            if loss_percent < entry.stop_loss_percent:
+            if loss_percent < stop_percent:
                 continue
 
             result = close_order_manager.close_entry(
@@ -72,7 +86,9 @@ class StopLossManager:
 
             results.append({
                 "entry_id": entry.id,
+                "direction": direction,
                 "loss_percent": loss_percent,
+                "stop_loss_percent": stop_percent,
                 "stop_loss_price": stop_price,
                 "closing_result": result,
             })
