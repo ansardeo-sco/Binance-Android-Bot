@@ -1,8 +1,14 @@
+
 import logging
 from datetime import datetime, timezone
 
 from config import settings
-from models import ReentryRecord, TradingCycle
+from models import (
+    ReentryRecord,
+    TradingCycle,
+    CycleEntry,
+    CycleOrder,
+)
 
 from binance_client import binance_client
 from order_manager import order_manager
@@ -22,7 +28,6 @@ class ReentryManager:
 
     @staticmethod
     def _direction_enabled(symbol_settings, direction):
-
         if direction == "LONG":
             return bool(symbol_settings["enabled_long"])
 
@@ -31,7 +36,82 @@ class ReentryManager:
 
         return False
 
+    def _recover_incomplete_records(self, db):
+
+        records = (
+            db.query(ReentryRecord)
+            .filter(
+                ReentryRecord.status.in_([
+                    "PROCESSING",
+                    "ORDER_UNCONFIRMED",
+                ])
+            )
+            .order_by(ReentryRecord.id.asc())
+            .all()
+        )
+
+        for record in records:
+
+            if not record.new_cycle_id:
+                record.status = "WAITING"
+                db.commit()
+                continue
+
+            orders = (
+                db.query(CycleOrder)
+                .filter(
+                    CycleOrder.cycle_id == record.new_cycle_id
+                )
+                .all()
+            )
+
+            entries = (
+                db.query(CycleEntry)
+                .filter(
+                    CycleEntry.cycle_id == record.new_cycle_id
+                )
+                .all()
+            )
+
+            # کوئی Entry یا Order ریکارڈ نہیں:
+            # order_manager نے ابھی Exchange request نہیں بھیجی۔
+            if not orders and not entries:
+
+                failed_cycle = (
+                    db.query(TradingCycle)
+                    .filter(
+                        TradingCycle.id == record.new_cycle_id
+                    )
+                    .first()
+                )
+
+                if failed_cycle:
+                    failed_cycle.status = "ENTRY_FAILED"
+
+                record.status = "WAITING"
+                record.new_cycle_id = None
+                db.commit()
+                continue
+
+            # UNKNOWN آرڈر کی صورت میں دوبارہ آرڈر ہرگز نہ بھیجیں۔
+            if any(order.status == "UNKNOWN" for order in orders):
+                record.status = "ORDER_UNCONFIRMED"
+                db.commit()
+                continue
+
+            # Order موجود ہے اور UNKNOWN نہیں:
+            # یہ کوشش استعمال ہو چکی ہے؛ دوبارہ آرڈر نہ بھیجیں۔
+            if orders:
+                record.status = "TRIGGERED"
+
+                if not record.triggered_at:
+                    record.triggered_at = datetime.now(timezone.utc)
+
+                db.commit()
+
     async def process_waiting(self, db):
+
+        self._recover_incomplete_records(db)
 
         records = (
             db.query(ReentryRecord)
@@ -48,7 +128,6 @@ class ReentryManager:
             new_cycle_id = None
 
             try:
-
                 old_cycle = (
                     db.query(TradingCycle)
                     .filter(TradingCycle.id == record.cycle_id)
@@ -83,16 +162,12 @@ class ReentryManager:
                 if active_count >= settings.MAX_ACTIVE_CYCLES_PER_SYMBOL:
                     continue
 
-                # نئی Re-entry کے لیے موجودہ کوائن کی سیٹنگز حاصل کریں۔
                 symbol_settings = settings_manager.get_symbol_settings(
-                    db,
-                    record.symbol,
+                    db, record.symbol
                 )
 
-                # اگر اس سمت کی اجازت بند ہے تو Re-entry انتظار کرے گی۔
                 if not self._direction_enabled(
-                    symbol_settings,
-                    record.direction,
+                    symbol_settings, record.direction
                 ):
                     continue
 
@@ -119,7 +194,6 @@ class ReentryManager:
                 if not reached:
                     continue
 
-                # Re-entry کو پہلے محفوظ طور پر PROCESSING کریں۔
                 saved_record = (
                     db.query(ReentryRecord)
                     .filter(ReentryRecord.id == record_id)
@@ -135,17 +209,12 @@ class ReentryManager:
                     symbol=record.symbol,
                     direction=record.direction,
                     status="ACTIVE",
-
-                    # نئی Cycle میں موجودہ Settings محفوظ ہوں گی۔
                     initial_margin=symbol_settings["initial_margin"],
                     averaging_margin=symbol_settings["averaging_margin"],
                     opposite_margin=symbol_settings["opposite_margin"],
-
                     leverage=symbol_settings["leverage"],
-
                     tp_percent=symbol_settings["tp_percent"],
                     sl_percent=symbol_settings["sl_percent"],
-
                     warning_percent=symbol_settings["warning_percent"],
                     opposite_percent=symbol_settings["opposite_percent"],
                     averaging_percent=symbol_settings["averaging_percent"],
@@ -163,7 +232,6 @@ class ReentryManager:
                 db.commit()
 
                 try:
-
                     result = order_manager.place_initial_entry(
                         db,
                         new_cycle,
@@ -187,7 +255,6 @@ class ReentryManager:
                         result.get("success")
                         and order_status != "UNKNOWN"
                     ):
-
                         if saved_record:
                             saved_record.status = "TRIGGERED"
                             saved_record.triggered_at = (
@@ -204,7 +271,6 @@ class ReentryManager:
                         })
 
                     else:
-
                         if saved_cycle:
                             saved_cycle.status = "ORDER_UNCONFIRMED"
 
@@ -219,8 +285,7 @@ class ReentryManager:
                             "status": "ORDER_UNCONFIRMED",
                         })
 
-                except Exception:
-
+                except Exception as error:
                     db.rollback()
 
                     saved_record = (
@@ -235,26 +300,58 @@ class ReentryManager:
                         .first()
                     )
 
+                    saved_order = (
+                        db.query(CycleOrder)
+                        .filter(
+                            CycleOrder.cycle_id == new_cycle_id
+                        )
+                        .first()
+                    )
+
+                    saved_entry = (
+                        db.query(CycleEntry)
+                        .filter(
+                            CycleEntry.cycle_id == new_cycle_id
+                        )
+                        .first()
+                    )
+
+                    exchange_request_may_exist = bool(
+                        saved_order or saved_entry
+                    )
+
                     if saved_record:
-                        saved_record.status = "ORDER_UNCONFIRMED"
+                        if exchange_request_may_exist:
+                            saved_record.status = "ORDER_UNCONFIRMED"
+                        else:
+                            saved_record.status = "WAITING"
+                            saved_record.new_cycle_id = None
 
                     if saved_cycle:
-                        saved_cycle.status = "ORDER_UNCONFIRMED"
+                        saved_cycle.status = (
+                            "ORDER_UNCONFIRMED"
+                            if exchange_request_may_exist
+                            else "ENTRY_FAILED"
+                        )
 
                     db.commit()
 
                     logger.exception(
-                        "Re-entry order could not be confirmed."
+                        "Re-entry order could not be confirmed: %s",
+                        error,
                     )
 
                     results.append({
                         "record_id": record_id,
                         "cycle_id": new_cycle_id,
-                        "status": "ORDER_UNCONFIRMED",
+                        "status": (
+                            "ORDER_UNCONFIRMED"
+                            if exchange_request_may_exist
+                            else "WAITING_RETRY"
+                        ),
                     })
 
             except Exception:
-
                 db.rollback()
 
                 logger.exception(
