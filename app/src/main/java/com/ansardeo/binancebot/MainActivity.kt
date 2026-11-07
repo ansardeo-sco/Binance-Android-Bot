@@ -1,533 +1,696 @@
 package com.ansardeo.binancebot
 
 import android.os.Bundle
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
 import android.view.View
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
-import android.widget.Button
-import android.widget.EditText
-import android.widget.RadioGroup
-import android.widget.Spinner
-import android.widget.TextView
-import android.widget.Toast
+import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
-import okhttp3.Call
-import okhttp3.Callback
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
+import okhttp3.*
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var txtStatus: TextView
-    private lateinit var txtMode: TextView
-    private lateinit var txtBalance: TextView
-    private lateinit var txtTotalBalance: TextView
-    private lateinit var txtCycleCount: TextView
-    private lateinit var txtActivePositions: TextView
-    private lateinit var txtSymbolSettings: TextView
-
-    private lateinit var spSymbol: Spinner
-    private lateinit var spLeverage: Spinner
-    private lateinit var rgDirection: RadioGroup
-    private lateinit var etMargin: EditText
-
-    private lateinit var btnSubmitEntry: Button
-    private lateinit var btnRefresh: Button
+    private val baseUrl =
+        "https://ansardeo-sco-binance-android-bot.hf.space/api/v1"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    private val backendBaseUrl =
-        "https://ansardeo-sco-binance-android-bot.hf.space/api/v1"
+    private val bg = Color.rgb(8, 15, 29)
+    private val card = Color.rgb(17, 29, 47)
+    private val yellow = Color.rgb(240, 185, 11)
+    private val white = Color.WHITE
+    private val muted = Color.rgb(143, 163, 189)
+    private val green = Color.rgb(83, 198, 140)
+    private val red = Color.rgb(240, 91, 103)
+
+    private lateinit var content: FrameLayout
+    private lateinit var topStatus: TextView
 
     private val symbols = arrayOf(
-        "BTCUSDT",
-        "ETHUSDT",
-        "BNBUSDT",
-        "SOLUSDT",
-        "XRPUSDT",
-        "ADAUSDT",
-        "DOGEUSDT"
+        "BTCUSDT", "ETHUSDT", "BNBUSDT",
+        "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT"
     )
 
-    private val leverageOptions = arrayOf(
-        "1x",
-        "2x",
-        "3x",
-        "5x",
-        "6x",
-        "10x",
-        "15x",
-        "20x"
-    )
+    private var selectedSymbol = "BTCUSDT"
+    private var currentPage = "Dashboard"
 
-    // Testnet جانچ مکمل ہونے تک ٹریڈنگ بند رہے گی۔
-    private val tradingEnabled = false
+    private lateinit var navItems: List<TextView>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        initializeViews()
-        setupSpinners()
-        setupDashboard()
+        content = findViewById(R.id.contentFrame)
+        topStatus = findViewById(R.id.txtTopStatus)
 
-        btnRefresh.setOnClickListener {
-            refreshDashboard()
-        }
+        navItems = listOf(
+            findViewById(R.id.navDashboard),
+            findViewById(R.id.navPositions),
+            findViewById(R.id.navSettings),
+            findViewById(R.id.navActivity),
+            findViewById(R.id.navMore)
+        )
 
-        btnSubmitEntry.setOnClickListener {
-            Toast.makeText(
-                this,
-                "Trading is disabled until Testnet testing is completed.",
-                Toast.LENGTH_LONG
-            ).show()
-        }
+        navItems[0].setOnClickListener { showPage("Dashboard") }
+        navItems[1].setOnClickListener { showPage("Positions") }
+        navItems[2].setOnClickListener { showPage("Settings") }
+        navItems[3].setOnClickListener { showPage("Activity") }
+        navItems[4].setOnClickListener { showPage("More") }
 
-        refreshDashboard()
+        showPage("Dashboard")
     }
 
-    private fun initializeViews() {
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
-        txtStatus = findViewById(R.id.txtStatus)
-        txtMode = findViewById(R.id.txtMode)
-        txtBalance = findViewById(R.id.txtBalance)
-        txtTotalBalance = findViewById(R.id.txtTotalBalance)
-        txtCycleCount = findViewById(R.id.txtCycleCount)
-        txtActivePositions = findViewById(R.id.txtActivePositions)
-        txtSymbolSettings = findViewById(R.id.txtSymbolSettings)
-
-        spSymbol = findViewById(R.id.spSymbol)
-        spLeverage = findViewById(R.id.spLeverage)
-        rgDirection = findViewById(R.id.rgDirection)
-        etMargin = findViewById(R.id.etMargin)
-
-        btnSubmitEntry = findViewById(R.id.btnSubmitEntry)
-        btnRefresh = findViewById(R.id.btnRefresh)
+    private fun rounded(color: Int, radius: Int = 16): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = dp(radius).toFloat()
+        }
     }
 
-    private fun setupSpinners() {
+    private fun text(
+        value: String,
+        size: Float = 14f,
+        color: Int = white,
+        bold: Boolean = false
+    ): TextView {
+        return TextView(this).apply {
+            text = value
+            textSize = size
+            setTextColor(color)
+            if (bold) setTypeface(null, Typeface.BOLD)
+        }
+    }
 
-        val symbolAdapter = ArrayAdapter(
+    private fun column(): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+    }
+
+    private fun row(): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+    }
+
+    private fun cardView(): LinearLayout {
+        return column().apply {
+            background = rounded(card)
+            setPadding(dp(16), dp(15), dp(16), dp(15))
+        }
+    }
+
+    private fun addSpace(parent: LinearLayout, height: Int = 12) {
+        parent.addView(View(this), LinearLayout.LayoutParams(
+            1, dp(height)
+        ))
+    }
+
+    private fun addLabel(
+        parent: LinearLayout,
+        label: String,
+        value: String,
+        valueColor: Int = white
+    ) {
+        val line = row()
+
+        line.addView(
+            text(label, 12f, muted),
+            LinearLayout.LayoutParams(0, -2, 1f)
+        )
+
+        line.addView(text(value, 13f, valueColor, true))
+
+        parent.addView(line)
+        addSpace(parent, 10)
+    }
+
+    private fun addCard(
+        parent: LinearLayout,
+        title: String,
+        subtitle: String? = null
+    ): LinearLayout {
+        val box = cardView()
+        box.addView(text(title, 15f, white, true))
+
+        if (subtitle != null) {
+            addSpace(box, 5)
+            box.addView(text(subtitle, 12f, muted))
+        }
+
+        addSpace(parent, 12)
+        parent.addView(box)
+
+        return box
+    }
+
+    private fun pageContainer(): LinearLayout {
+        val outer = column()
+        outer.setPadding(dp(16), dp(16), dp(16), dp(20))
+
+        val scroll = ScrollView(this)
+        scroll.isFillViewport = true
+        scroll.addView(outer)
+
+        content.removeAllViews()
+        content.addView(scroll)
+
+        return outer
+    }
+
+    private fun showPage(page: String) {
+        currentPage = page
+
+        navItems.forEachIndexed { index, item ->
+            item.setTextColor(
+                if (
+                    (page == "Dashboard" && index == 0) ||
+                    (page == "Positions" && index == 1) ||
+                    (page == "Settings" && index == 2) ||
+                    (page == "Activity" && index == 3) ||
+                    (page == "More" && index == 4)
+                ) yellow else muted
+            )
+        }
+
+        when (page) {
+            "Dashboard" -> dashboardPage()
+            "Positions" -> positionsPage()
+            "Settings" -> settingsPage()
+            "Activity" -> activityPage()
+            "More" -> morePage()
+        }
+    }
+
+    private fun dashboardPage() {
+        val root = pageContainer()
+
+        root.addView(text("Dashboard", 23f, white, true))
+        addSpace(root, 4)
+        root.addView(text(
+            "Your trading system at a glance",
+            12f, muted
+        ))
+
+        val connection = addCard(
+            root,
+            "SYSTEM CONNECTION",
+            "Checking server and account status..."
+        )
+
+        val connectionStatus = text(
+            "● Checking connection",
+            14f, yellow, true
+        )
+        connection.addView(connectionStatus)
+
+        addSpace(root, 16)
+
+        val balanceRow = row()
+
+        val available = cardView()
+        available.addView(text("AVAILABLE BALANCE", 10f, muted, true))
+        addSpace(available, 12)
+        val balanceText = text("-- USDT", 20f, green, true)
+        available.addView(balanceText)
+
+        val total = cardView()
+        total.addView(text("TOTAL BALANCE", 10f, muted, true))
+        addSpace(total, 12)
+        val totalText = text("-- USDT", 20f, white, true)
+        total.addView(totalText)
+
+        balanceRow.addView(
+            available,
+            LinearLayout.LayoutParams(0, dp(105), 1f).apply {
+                marginEnd = dp(6)
+            }
+        )
+        balanceRow.addView(
+            total,
+            LinearLayout.LayoutParams(0, dp(105), 1f).apply {
+                marginStart = dp(6)
+            }
+        )
+
+        root.addView(balanceRow)
+        addSpace(root, 12)
+
+        val cycleCard = addCard(root, "ACTIVE TRADING CYCLES")
+        val cycleCount = text("--", 30f, yellow, true)
+        cycleCard.addView(cycleCount)
+        cycleCard.addView(text("Currently monitored cycles", 11f, muted))
+
+        val positionsCard = addCard(root, "ACTIVE POSITIONS")
+        val positionsText = text("Loading positions...", 13f, muted)
+        positionsCard.addView(positionsText)
+
+        val quick = addCard(root, "QUICK ACCESS")
+        addActionButton(quick, "View Positions") {
+            showPage("Positions")
+        }
+        addActionButton(quick, "Coin Settings") {
+            showPage("Settings")
+        }
+        addActionButton(quick, "Notifications & Events") {
+            showPage("Activity")
+        }
+
+        val refresh = addButton(root, "REFRESH DASHBOARD", yellow)
+        refresh.setOnClickListener {
+            dashboardPage()
+        }
+
+        getJson("$baseUrl/balance") { json, error ->
+            if (error != null || json == null) {
+                connectionStatus.text = "● Server connection unavailable"
+                connectionStatus.setTextColor(red)
+                topStatus.text = "● OFFLINE"
+                topStatus.setTextColor(red)
+            } else {
+                val testnet = json.optBoolean("testnet", true)
+                connectionStatus.text =
+                    if (testnet) "● Connected to Binance Testnet"
+                    else "● Live mode detected"
+                connectionStatus.setTextColor(
+                    if (testnet) green else red
+                )
+                topStatus.text =
+                    if (testnet) "● TESTNET" else "● LIVE"
+                topStatus.setTextColor(
+                    if (testnet) green else red
+                )
+
+                balanceText.text = String.format(
+                    "%.4f USDT", json.optDouble("balance", 0.0)
+                )
+                totalText.text = String.format(
+                    "%.4f USDT", json.optDouble("total_balance", 0.0)
+                )
+            }
+        }
+
+        getJson("$baseUrl/cycles/active") { json, _ ->
+            if (json != null) {
+                val count = json.optInt("active_cycles_count", 0)
+                cycleCount.text = count.toString()
+
+                val cycles = json.optJSONArray("cycles") ?: JSONArray()
+                positionsText.text =
+                    if (cycles.length() == 0) {
+                        "No active trading cycles."
+                    } else {
+                        buildString {
+                            for (i in 0 until cycles.length()) {
+                                val c = cycles.getJSONObject(i)
+                                append(
+                                    "${c.optString("symbol")}  •  " +
+                                    "${c.optString("direction")}  •  " +
+                                    "${c.optString("status")}\n"
+                                )
+                            }
+                        }.trim()
+                    }
+            } else {
+                positionsText.text = "Unable to load active positions."
+            }
+        }
+    }
+
+    private fun positionsPage() {
+        val root = pageContainer()
+
+        root.addView(text("Positions", 23f, white, true))
+        root.addView(text(
+            "Active Long and Short trading cycles",
+            12f, muted
+        ))
+
+        val list = addCard(root, "ACTIVE CYCLES")
+        list.addView(text("Loading active cycles...", 13f, muted))
+
+        getJson("$baseUrl/cycles/active") { json, _ ->
+            list.removeAllViews()
+            list.addView(text("ACTIVE CYCLES", 15f, white, true))
+
+            val cycles = json?.optJSONArray("cycles") ?: JSONArray()
+
+            if (cycles.length() == 0) {
+                addSpace(list, 12)
+                list.addView(text("No active cycles found.", 13f, muted))
+            }
+
+            for (i in 0 until cycles.length()) {
+                val cycle = cycles.getJSONObject(i)
+                val id = cycle.optInt("id")
+
+                addSpace(list, 12)
+                list.addView(text(
+                    "${cycle.optString("symbol")}  |  " +
+                    cycle.optString("direction"),
+                    15f, yellow, true
+                ))
+                addLabel(
+                    list, "Status",
+                    cycle.optString("status")
+                )
+                addLabel(
+                    list, "Average Entry",
+                    cycle.optDouble("average_entry_price").toString()
+                )
+                addLabel(
+                    list, "Filled Quantity",
+                    cycle.optDouble("total_filled_quantity").toString()
+                )
+
+                val details = addButton(list, "VIEW CYCLE DETAILS", 0xFF263B56.toInt())
+                details.setOnClickListener {
+                    cycleDetails(id)
+                }
+            }
+        }
+
+        addSpace(root, 10)
+        root.addView(text(
+            "Only cycles returned by the server are displayed.",
+            11f, muted
+        ))
+    }
+
+    private fun cycleDetails(id: Int) {
+        getJson("$baseUrl/cycles/$id") { json, error ->
+            if (error != null || json == null) {
+                Toast.makeText(
+                    this, "Unable to load cycle details",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@getJson
+            }
+
+            val message = buildString {
+                append("Cycle #$id\n")
+                append("${json.optString("symbol")} ")
+                append("${json.optString("direction")}\n")
+                append("Status: ${json.optString("status")}\n")
+                append("Average: ${json.optDouble("average_entry_price")}\n")
+                append("Quantity: ${json.optDouble("total_filled_quantity")}\n")
+                append("Take Profit: ${json.optDouble("take_profit_price")}\n")
+                append("Re-entry: ${json.optDouble("reentry_price")}\n\n")
+
+                val entries = json.optJSONArray("entries") ?: JSONArray()
+                append("ENTRIES\n")
+
+                for (i in 0 until entries.length()) {
+                    val e = entries.getJSONObject(i)
+                    append(
+                        "${e.optString("type")} | " +
+                        "${e.optString("status")} | " +
+                        "Qty: ${e.optDouble("filled_quantity")}\n"
+                    )
+                }
+            }
+
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Cycle Details")
+                .setMessage(message)
+                .setPositiveButton("CLOSE", null)
+                .show()
+        }
+    }
+
+    private fun settingsPage() {
+        val root = pageContainer()
+
+        root.addView(text("Coin Settings", 23f, white, true))
+        root.addView(text(
+            "View saved settings for each trading pair",
+            12f, muted
+        ))
+
+        val box = addCard(root, "SELECT TRADING PAIR")
+
+        val spinner = Spinner(this)
+        spinner.adapter = ArrayAdapter(
             this,
-            android.R.layout.simple_spinner_item,
+            android.R.layout.simple_spinner_dropdown_item,
             symbols
         )
+        box.addView(spinner)
 
-        symbolAdapter.setDropDownViewResource(
-            android.R.layout.simple_spinner_dropdown_item
-        )
+        val details = addCard(root, "SAVED CONFIGURATION")
+        details.addView(text("Select a coin to load its settings.", 13f, muted))
 
-        spSymbol.adapter = symbolAdapter
+        fun loadSettings(symbol: String) {
+            details.removeAllViews()
+            details.addView(text("$symbol SETTINGS", 15f, yellow, true))
+            details.addView(text("Loading...", 13f, muted))
 
-        val leverageAdapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_item,
-            leverageOptions
-        )
+            getJson("$baseUrl/settings/$symbol") { json, error ->
+                details.removeAllViews()
+                details.addView(text("$symbol SETTINGS", 15f, yellow, true))
 
-        leverageAdapter.setDropDownViewResource(
-            android.R.layout.simple_spinner_dropdown_item
-        )
+                if (error != null || json == null) {
+                    details.addView(text(
+                        "Settings could not be loaded.",
+                        13f, red
+                    ))
+                    return@getJson
+                }
 
-        spLeverage.adapter = leverageAdapter
-        spLeverage.setSelection(4)
+                addLabel(
+                    details, "LONG",
+                    if (json.optBoolean("enabled_long", true)) "ENABLED" else "DISABLED",
+                    green
+                )
+                addLabel(
+                    details, "SHORT",
+                    if (json.optBoolean("enabled_short", true)) "ENABLED" else "DISABLED",
+                    green
+                )
+                addLabel(details, "Initial Margin", "${json.optDouble("initial_margin")} USDT")
+                addLabel(details, "Averaging Margin", "${json.optDouble("averaging_margin")} USDT")
+                addLabel(details, "Opposite Margin", "${json.optDouble("opposite_margin")} USDT")
+                addLabel(details, "Leverage", "${json.optInt("leverage")}x")
+                addLabel(details, "Take Profit", "${json.optDouble("tp_percent")}%")
+                addLabel(details, "Stop Loss", "${json.optDouble("sl_percent")}%")
+                addLabel(details, "Warning", "${json.optDouble("warning_percent")}%")
+                addLabel(details, "Opposite Entry", "${json.optDouble("opposite_percent")}%")
+                addLabel(details, "Averaging", "${json.optDouble("averaging_percent")}%")
+                addLabel(details, "Re-entry", "${json.optDouble("reentry_percent")}%")
 
-        spSymbol.onItemSelectedListener =
+                details.addView(text(
+                    "Settings are currently view-only in the app.",
+                    11f, yellow
+                ))
+            }
+        }
+
+        spinner.onItemSelectedListener =
             object : AdapterView.OnItemSelectedListener {
-
                 override fun onItemSelected(
                     parent: AdapterView<*>?,
                     view: View?,
                     position: Int,
                     id: Long
                 ) {
-                    val symbol = symbols[position]
-                    fetchSymbolSettings(symbol)
+                    selectedSymbol = symbols[position]
+                    loadSettings(selectedSymbol)
                 }
 
-                override fun onNothingSelected(
-                    parent: AdapterView<*>?
-                ) {
-                    txtSymbolSettings.text =
-                        "No coin selected."
-                }
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
             }
     }
 
-    private fun setupDashboard() {
+    private fun activityPage() {
+        val root = pageContainer()
 
-        txtStatus.text = "SERVER: CHECKING CONNECTION"
-        txtMode.text = "MODE: TESTNET CONFIGURATION"
+        root.addView(text("Activity Center", 23f, white, true))
+        root.addView(text(
+            "Notifications, bot events and re-entry status",
+            12f, muted
+        ))
 
-        txtBalance.text = "-- USDT"
-        txtTotalBalance.text = "-- USDT"
-        txtCycleCount.text = "0"
+        val notifications = addCard(root, "NOTIFICATIONS")
+        notifications.addView(text("Loading notifications...", 13f, muted))
 
-        etMargin.setText("2.0")
+        val events = addCard(root, "BOT EVENTS")
+        events.addView(text("Loading events...", 13f, muted))
 
-        btnSubmitEntry.isEnabled = tradingEnabled
-        btnSubmitEntry.text =
-            if (tradingEnabled) {
-                "START TRADING CYCLE"
-            } else {
-                "TRADING DISABLED - TESTING PENDING"
-            }
+        val reentries = addCard(root, "RE-ENTRY RECORDS")
+        reentries.addView(text("Loading re-entries...", 13f, muted))
 
-        btnSubmitEntry.alpha =
-            if (tradingEnabled) 1.0f else 0.55f
-
-        txtActivePositions.text =
-            "Loading active cycles..."
-
-        txtSymbolSettings.text =
-            "Loading selected coin settings..."
+        loadList("$baseUrl/notifications", notifications, "notifications")
+        loadList("$baseUrl/events", events, "events")
+        loadList("$baseUrl/reentries", reentries, "reentries")
     }
 
-    private fun refreshDashboard() {
+    private fun loadList(
+        url: String,
+        box: LinearLayout,
+        arrayName: String
+    ) {
+        getJson(url) { json, error ->
+            box.removeAllViews()
+            box.addView(text(arrayName.uppercase(), 15f, white, true))
 
-        btnRefresh.isEnabled = false
-        btnRefresh.text = "REFRESHING..."
+            if (error != null || json == null) {
+                box.addView(text("Unable to load data.", 13f, red))
+                return@getJson
+            }
 
-        fetchAccountBalance()
-        fetchActiveCycles()
+            val array = json.optJSONArray(arrayName) ?: JSONArray()
 
-        if (spSymbol.selectedItem != null) {
-            fetchSymbolSettings(
-                spSymbol.selectedItem.toString()
-            )
+            if (array.length() == 0) {
+                addSpace(box, 10)
+                box.addView(text("No records available.", 13f, muted))
+                return@getJson
+            }
+
+            for (i in 0 until array.length()) {
+                val item = array.getJSONObject(i)
+                addSpace(box, 12)
+
+                val title = item.optString(
+                    "title",
+                    item.optString(
+                        "symbol",
+                        item.optString("type", "Record")
+                    )
+                )
+
+                box.addView(text(title, 14f, yellow, true))
+
+                val message = item.optString(
+                    "message",
+                    item.optString(
+                        "status",
+                        item.optString("severity", "")
+                    )
+                )
+
+                if (message.isNotBlank()) {
+                    box.addView(text(message, 12f, white))
+                }
+
+                val date = item.optString("created_at", "")
+                if (date.isNotBlank()) {
+                    box.addView(text(date, 10f, muted))
+                }
+            }
         }
     }
 
-    private fun finishRefreshButton() {
-        btnRefresh.isEnabled = true
-        btnRefresh.text = "REFRESH DASHBOARD"
+    private fun morePage() {
+        val root = pageContainer()
+
+        root.addView(text("More", 23f, white, true))
+        root.addView(text(
+            "System information and additional sections",
+            12f, muted
+        ))
+
+        val system = addCard(root, "SYSTEM INFORMATION")
+        addLabel(system, "Application", "Binance Futures Bot")
+        addLabel(system, "Version", "1.0")
+        addLabel(system, "Trading Environment", "Testnet only", green)
+        addLabel(system, "Live Trading", "Disabled", red)
+
+        val orders = addCard(root, "ORDER MANAGEMENT")
+        orders.addView(text(
+            "Order history screen is reserved. " +
+            "A read-only order history API is required before real order records can be displayed.",
+            12f, muted
+        ))
+
+        val history = addCard(root, "TRADE HISTORY")
+        history.addView(text(
+            "Closed cycle history will appear here after a dedicated history API is added.",
+            12f, muted
+        ))
+
+        val safety = addCard(root, "TRADING SAFETY")
+        safety.addView(text(
+            "Manual entry and all trading actions remain disabled. " +
+            "This app screen does not submit orders.",
+            12f, yellow
+        ))
     }
 
-    private fun fetchSymbolSettings(symbol: String) {
+    private fun addButton(
+        parent: LinearLayout,
+        label: String,
+        color: Int
+    ): Button {
+        val button = Button(this)
+        button.text = label
+        button.textSize = 12f
+        button.setTextColor(
+            if (color == yellow) Color.BLACK else white
+        )
+        button.background = rounded(color, 12)
+        button.isAllCaps = false
 
-        txtSymbolSettings.text =
-            "Loading $symbol settings..."
+        parent.addView(
+            button,
+            LinearLayout.LayoutParams(
+                -1, dp(48)
+            ).apply {
+                topMargin = dp(8)
+            }
+        )
+        return button
+    }
 
+    private fun addActionButton(
+        parent: LinearLayout,
+        label: String,
+        action: () -> Unit
+    ) {
+        val button = addButton(parent, label, 0xFF263B56.toInt())
+        button.setOnClickListener { action() }
+    }
+
+    private fun getJson(
+        url: String,
+        callback: (JSONObject?, String?) -> Unit
+    ) {
         val request = Request.Builder()
-            .url("$backendBaseUrl/settings/$symbol")
+            .url(url)
             .get()
             .build()
 
         client.newCall(request).enqueue(object : Callback {
-
             override fun onFailure(call: Call, e: IOException) {
-
                 runOnUiThread {
-                    txtSymbolSettings.text =
-                        "Unable to load $symbol settings.\n" +
-                        "Check server connection."
+                    callback(null, e.message ?: "Network error")
                 }
             }
 
-            override fun onResponse(
-                call: Call,
-                response: Response
-            ) {
-
-                val responseData = response.body?.string()
+            override fun onResponse(call: Call, response: Response) {
+                val body = response.body?.string()
 
                 runOnUiThread {
-
-                    if (response.isSuccessful && responseData != null) {
-
-                        try {
-
-                            val json = JSONObject(responseData)
-
-                            val enabledLong =
-                                json.optBoolean("enabled_long", true)
-
-                            val enabledShort =
-                                json.optBoolean("enabled_short", true)
-
-                            val initialMargin =
-                                json.optDouble("initial_margin", 2.0)
-
-                            val averagingMargin =
-                                json.optDouble("averaging_margin", 2.0)
-
-                            val oppositeMargin =
-                                json.optDouble("opposite_margin", 2.0)
-
-                            val leverage =
-                                json.optInt("leverage", 6)
-
-                            val tp =
-                                json.optDouble("tp_percent", 3.0)
-
-                            val sl =
-                                json.optDouble("sl_percent", 12.0)
-
-                            val warning =
-                                json.optDouble("warning_percent", 6.0)
-
-                            val opposite =
-                                json.optDouble("opposite_percent", 7.0)
-
-                            val averaging =
-                                json.optDouble("averaging_percent", 9.0)
-
-                            val reentry =
-                                json.optDouble("reentry_percent", 1.0)
-
-                            // منتخب کوائن کا مارجن اور لیوریج دکھائیں۔
-                            etMargin.setText(
-                                initialMargin.toString()
-                            )
-
-                            val leverageIndex =
-                                leverageOptions.indexOf("${leverage}x")
-
-                            if (leverageIndex >= 0) {
-                                spLeverage.setSelection(leverageIndex)
-                            }
-
-                            val directionText =
-                                "LONG: ${if (enabledLong) "ENABLED" else "DISABLED"}\n" +
-                                "SHORT: ${if (enabledShort) "ENABLED" else "DISABLED"}"
-
-                            txtSymbolSettings.text =
-                                "$symbol SETTINGS\n\n" +
-                                "$directionText\n\n" +
-                                "Initial Margin: $initialMargin USDT\n" +
-                                "Averaging Margin: $averagingMargin USDT\n" +
-                                "Opposite Margin: $oppositeMargin USDT\n" +
-                                "Leverage: ${leverage}x\n\n" +
-                                "Take Profit: $tp%\n" +
-                                "Stop Loss: $sl%\n" +
-                                "Warning: $warning%\n" +
-                                "Opposite Entry: $opposite%\n" +
-                                "Averaging: $averaging%\n" +
-                                "Re-entry: $reentry%"
-
-                        } catch (e: Exception) {
-
-                            txtSymbolSettings.text =
-                                "Invalid settings response."
-                        }
-
+                    if (!response.isSuccessful || body == null) {
+                        callback(null, "HTTP ${response.code}")
                     } else {
-
-                        txtSymbolSettings.text =
-                            "Settings unavailable for $symbol."
-                    }
-                }
-            }
-        })
-    }
-
-    private fun fetchAccountBalance() {
-
-        val request = Request.Builder()
-            .url("$backendBaseUrl/balance")
-            .get()
-            .build()
-
-        client.newCall(request).enqueue(object : Callback {
-
-            override fun onFailure(call: Call, e: IOException) {
-
-                runOnUiThread {
-                    txtStatus.text = "SERVER: CONNECTION FAILED"
-                    txtBalance.text = "Unavailable"
-                    txtMode.text = "MODE: NOT VERIFIED"
-                    finishRefreshButton()
-                }
-            }
-
-            override fun onResponse(
-                call: Call,
-                response: Response
-            ) {
-
-                val responseData = response.body?.string()
-
-                runOnUiThread {
-
-                    if (response.isSuccessful && responseData != null) {
-
                         try {
-
-                            val json = JSONObject(responseData)
-
-                            val balance =
-                                json.optDouble("balance", 0.0)
-
-                            val totalBalance =
-                                json.optDouble("total_balance", 0.0)
-
-                            val testnet =
-                                json.optBoolean("testnet", true)
-
-                            txtBalance.text =
-                                String.format("%.4f USDT", balance)
-
-                            txtTotalBalance.text =
-                                String.format("%.4f USDT", totalBalance)
-
-                            txtMode.text =
-                                if (testnet) {
-                                    "MODE: BINANCE TESTNET"
-                                } else {
-                                    "MODE: LIVE - NOT AUTHORIZED"
-                                }
-
-                            txtStatus.text =
-                                if (testnet) {
-                                    "SERVER: CONNECTED"
-                                } else {
-                                    "SERVER: LIVE MODE DETECTED"
-                                }
-
+                            callback(JSONObject(body), null)
                         } catch (e: Exception) {
-
-                            txtStatus.text = "SERVER: INVALID RESPONSE"
-                            txtBalance.text = "Data Error"
+                            callback(null, "Invalid server response")
                         }
-
-                    } else {
-
-                        txtStatus.text =
-                            "SERVER: CONNECTION UNAVAILABLE"
-
-                        txtBalance.text = "Unavailable"
-                    }
-
-                    finishRefreshButton()
-                }
-            }
-        })
-    }
-
-    private fun fetchActiveCycles() {
-
-        val request = Request.Builder()
-            .url("$backendBaseUrl/cycles/active")
-            .get()
-            .build()
-
-        client.newCall(request).enqueue(object : Callback {
-
-            override fun onFailure(call: Call, e: IOException) {
-
-                runOnUiThread {
-                    txtCycleCount.text = "--"
-                    txtActivePositions.text =
-                        "Unable to load active cycles."
-                }
-            }
-
-            override fun onResponse(
-                call: Call,
-                response: Response
-            ) {
-
-                val responseData = response.body?.string()
-
-                runOnUiThread {
-
-                    if (response.isSuccessful && responseData != null) {
-
-                        try {
-
-                            val json = JSONObject(responseData)
-
-                            val count =
-                                json.optInt("active_cycles_count", 0)
-
-                            val cycles =
-                                json.optJSONArray("cycles")
-
-                            txtCycleCount.text = count.toString()
-
-                            if (cycles == null || cycles.length() == 0) {
-
-                                txtActivePositions.text =
-                                    "No active trading cycles."
-
-                            } else {
-
-                                val display = StringBuilder()
-
-                                for (i in 0 until cycles.length()) {
-
-                                    val cycle =
-                                        cycles.getJSONObject(i)
-
-                                    val symbol =
-                                        cycle.optString("symbol", "Unknown")
-
-                                    val direction =
-                                        cycle.optString("direction", "Unknown")
-
-                                    val status =
-                                        cycle.optString("status", "Unknown")
-
-                                    val averagePrice =
-                                        cycle.optDouble(
-                                            "average_entry_price",
-                                            0.0
-                                        )
-
-                                    val quantity =
-                                        cycle.optDouble(
-                                            "total_filled_quantity",
-                                            0.0
-                                        )
-
-                                    display.append("● ")
-                                    display.append(symbol)
-                                    display.append(" | ")
-                                    display.append(direction)
-                                    display.append("\n")
-
-                                    display.append("Status: ")
-                                    display.append(status)
-                                    display.append("\n")
-
-                                    display.append("Average Entry: ")
-                                    display.append(
-                                        String.format("%.6f", averagePrice)
-                                    )
-                                    display.append("\n")
-
-                                    display.append("Quantity: ")
-                                    display.append(
-                                        String.format("%.6f", quantity)
-                                    )
-
-                                    if (i < cycles.length() - 1) {
-                                        display.append("\n\n")
-                                    }
-                                }
-
-                                txtActivePositions.text =
-                                    display.toString()
-                            }
-
-                        } catch (e: Exception) {
-
-                            txtActivePositions.text =
-                                "Unable to read cycle information."
-                        }
-
-                    } else {
-
-                        txtActivePositions.text =
-                            "Active cycles unavailable."
                     }
                 }
             }
