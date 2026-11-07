@@ -1,137 +1,428 @@
 <?xml version="1.0" encoding="utf-8"?>
 
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="#0B1220"
     android:fillViewport="true"
-    android:background="#101820">
+    android:scrollbars="vertical">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:padding="16dp">
 
-        <TextView
+        <!-- HEADER -->
+
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="BINANCE FUTURES BOT"
-            android:textColor="#FFFFFF"
-            android:textSize="24sp"
-            android:textStyle="bold"
+            android:orientation="vertical"
             android:gravity="center"
-            android:padding="16dp" />
+            android:paddingTop="12dp"
+            android:paddingBottom="18dp">
 
-        <TextView
-            android:id="@+id/txtStatus"
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="BINANCE"
+                android:textColor="#F0B90B"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:gravity="center" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="FUTURES BOT"
+                android:textColor="#FFFFFF"
+                android:textSize="27sp"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:paddingTop="3dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="AUTOMATED TRADING DASHBOARD"
+                android:textColor="#8190A5"
+                android:textSize="10sp"
+                android:letterSpacing="0.12"
+                android:gravity="center"
+                android:paddingTop="5dp" />
+
+        </LinearLayout>
+
+        <!-- SERVER STATUS -->
+
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Status: Checking..."
+            android:orientation="vertical"
+            android:background="#172337"
+            android:padding="15dp"
+            android:layout_marginBottom="14dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="CONNECTION STATUS"
+                android:textColor="#8FA3BD"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/txtStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="SERVER: CHECKING CONNECTION"
+                android:textColor="#F0B90B"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingTop="8dp" />
+
+            <TextView
+                android:id="@+id/txtMode"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="MODE: TESTNET CONFIGURATION"
+                android:textColor="#53C68C"
+                android:textSize="12sp"
+                android:paddingTop="6dp" />
+
+        </LinearLayout>
+
+        <!-- BALANCE SECTION -->
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ACCOUNT OVERVIEW"
             android:textColor="#FFFFFF"
-            android:textSize="15sp"
-            android:padding="12dp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="USDT Available Balance"
-            android:textColor="#B0BEC5"
-            android:textSize="14sp"
-            android:paddingTop="15dp" />
-
-        <TextView
-            android:id="@+id/txtBalance"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Loading..."
-            android:textColor="#FFFFFF"
-            android:textSize="22sp"
+            android:textSize="16sp"
             android:textStyle="bold"
-            android:padding="12dp" />
+            android:paddingBottom="10dp" />
 
-        <View
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="#607D8B"
-            android:layout_marginTop="15dp"
-            android:layout_marginBottom="15dp" />
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:weightSum="2"
+            android:layout_marginBottom="14dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="105dp"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:background="#172337"
+                android:padding="14dp"
+                android:layout_marginEnd="6dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="AVAILABLE BALANCE"
+                    android:textColor="#8FA3BD"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/txtBalance"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="-- USDT"
+                    android:textColor="#53C68C"
+                    android:textSize="19sp"
+                    android:textStyle="bold"
+                    android:paddingTop="12dp" />
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="105dp"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:background="#172337"
+                android:padding="14dp"
+                android:layout_marginStart="6dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="TOTAL BALANCE"
+                    android:textColor="#8FA3BD"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/txtTotalBalance"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="-- USDT"
+                    android:textColor="#FFFFFF"
+                    android:textSize="19sp"
+                    android:textStyle="bold"
+                    android:paddingTop="12dp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- ACTIVE CYCLES -->
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="#172337"
+            android:padding="15dp"
+            android:layout_marginBottom="20dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ACTIVE TRADING CYCLES"
+                    android:textColor="#8FA3BD"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/txtCycleCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0"
+                    android:textColor="#FFFFFF"
+                    android:textSize="27sp"
+                    android:textStyle="bold"
+                    android:paddingTop="5dp" />
+
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="LIVE MONITORING"
+                android:textColor="#53C68C"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+
+        </LinearLayout>
+
+        <!-- MANUAL ENTRY -->
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="MANUAL INITIAL ENTRY"
             android:textColor="#FFFFFF"
-            android:textSize="18sp"
+            android:textSize="17sp"
             android:textStyle="bold"
-            android:paddingBottom="12dp" />
-
-        <EditText
-            android:id="@+id/etSymbol"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Symbol e.g. BTCUSDT"
-            android:inputType="textCapCharacters"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#B0BEC5"
-            android:padding="12dp" />
-
-        <EditText
-            android:id="@+id/etDirection"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Direction: LONG or SHORT"
-            android:inputType="textCapCharacters"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#B0BEC5"
-            android:padding="12dp" />
-
-        <EditText
-            android:id="@+id/etMargin"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Initial Margin (USDT)"
-            android:inputType="numberDecimal"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#B0BEC5"
-            android:padding="12dp" />
-
-        <Button
-            android:id="@+id/btnSubmitEntry"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="START TRADING CYCLE"
-            android:layout_marginTop="15dp" />
-
-        <Button
-            android:id="@+id/btnRefresh"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="REFRESH BALANCE"
-            android:layout_marginTop="8dp" />
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="#607D8B"
-            android:layout_marginTop="20dp"
-            android:layout_marginBottom="15dp" />
+            android:paddingBottom="5dp" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="ACTIVE POSITIONS / TRADES"
+            android:text="Select the coin and direction for a new trading cycle."
+            android:textColor="#8190A5"
+            android:textSize="12sp"
+            android:paddingBottom="14dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#172337"
+            android:padding="16dp">
+
+            <!-- SYMBOL -->
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="SELECT COIN"
+                android:textColor="#AFC0D5"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:paddingBottom="7dp" />
+
+            <Spinner
+                android:id="@+id/spSymbol"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:background="#25364D"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp" />
+
+            <!-- DIRECTION -->
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="POSITION DIRECTION"
+                android:textColor="#AFC0D5"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:paddingTop="18dp"
+                android:paddingBottom="7dp" />
+
+            <RadioGroup
+                android:id="@+id/rgDirection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <RadioButton
+                    android:id="@+id/rbLong"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="LONG"
+                    android:textColor="#53C68C"
+                    android:buttonTint="#53C68C"
+                    android:checked="true"
+                    android:textStyle="bold" />
+
+                <RadioButton
+                    android:id="@+id/rbShort"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="SHORT"
+                    android:textColor="#F05B67"
+                    android:buttonTint="#F05B67"
+                    android:textStyle="bold" />
+
+            </RadioGroup>
+
+            <!-- MARGIN -->
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="INITIAL MARGIN (USDT)"
+                android:textColor="#AFC0D5"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:paddingTop="15dp"
+                android:paddingBottom="7dp" />
+
+            <EditText
+                android:id="@+id/etMargin"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:background="#25364D"
+                android:hint="Enter margin"
+                android:text="2.0"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#8190A5"
+                android:inputType="numberDecimal"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:singleLine="true" />
+
+            <!-- LEVERAGE -->
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="LEVERAGE"
+                android:textColor="#AFC0D5"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:paddingTop="17dp"
+                android:paddingBottom="7dp" />
+
+            <Spinner
+                android:id="@+id/spLeverage"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:background="#25364D"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp" />
+
+            <!-- TRADE BUTTON -->
+
+            <Button
+                android:id="@+id/btnSubmitEntry"
+                android:layout_width="match_parent"
+                android:layout_height="55dp"
+                android:text="TRADING DISABLED - TESTING PENDING"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:enabled="false"
+                android:alpha="0.55"
+                android:layout_marginTop="22dp"
+                android:backgroundTint="#F0B90B"
+                android:textColor="#101820" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Trading will be enabled after Testnet verification."
+                android:textColor="#8190A5"
+                android:textSize="10sp"
+                android:gravity="center"
+                android:paddingTop="9dp" />
+
+        </LinearLayout>
+
+        <!-- ACTIVE POSITIONS -->
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ACTIVE CYCLES DETAILS"
             android:textColor="#FFFFFF"
-            android:textSize="16sp"
-            android:textStyle="bold" />
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:paddingTop="22dp"
+            android:paddingBottom="10dp" />
 
         <TextView
             android:id="@+id/txtActivePositions"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="No active positions found"
-            android:textColor="#B0BEC5"
-            android:textSize="14sp"
-            android:padding="12dp" />
+            android:text="No active trading cycles."
+            android:textColor="#C2CEDD"
+            android:textSize="13sp"
+            android:background="#172337"
+            android:padding="15dp"
+            android:lineSpacingExtra="5dp" />
+
+        <!-- REFRESH -->
+
+        <Button
+            android:id="@+id/btnRefresh"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:text="REFRESH DASHBOARD"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#263B56"
+            android:layout_marginTop="18dp" />
+
+        <!-- FOOTER -->
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="BINANCE FUTURES BOT  |  VERSION 2.0"
+            android:textColor="#65758B"
+            android:textSize="10sp"
+            android:gravity="center"
+            android:paddingTop="22dp"
+            android:paddingBottom="15dp" />
 
     </LinearLayout>
 
