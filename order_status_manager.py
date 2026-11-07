@@ -10,6 +10,7 @@ from models import (
     ReentryRecord,
 )
 from binance_client import binance_client
+from config import settings
 
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,14 @@ class OrderStatusManager:
     }
 
     def sync_pending_orders(self):
+
+        # Production account کے آرڈرز کبھی Sync نہیں ہوں گے۔
+        settings.validate_trading_mode()
+
+        if not settings.BINANCE_USE_TESTNET:
+            raise RuntimeError(
+                "Order synchronization is restricted to Testnet."
+            )
 
         db = SessionLocal()
         results = []
@@ -454,6 +463,13 @@ class OrderStatusManager:
 
 
 def binance_fetch_order(order):
+
+    settings.validate_trading_mode()
+
+    if not settings.BINANCE_USE_TESTNET:
+        raise RuntimeError(
+            "Order lookup is restricted to Testnet."
+        )
 
     exchange = binance_client.exchange
 
