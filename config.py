@@ -54,8 +54,6 @@ class Settings:
         False,
     )
 
-    # Settings API protection.
-    # Set this secret in the server environment.
     BOT_ADMIN_TOKEN = os.getenv(
         "BOT_ADMIN_TOKEN",
         "",
@@ -106,32 +104,25 @@ class Settings:
     @property
     def trading_mode(self):
 
-        if self.BINANCE_USE_TESTNET:
+        if (
+            self.BINANCE_USE_TESTNET
+            and not self.LIVE_TRADING_ENABLED
+        ):
             return "TESTNET"
-
-        if self.LIVE_TRADING_ENABLED:
-            return "LIVE"
 
         return "DISABLED"
 
     def validate_trading_mode(self):
 
-        if (
-            not self.BINANCE_USE_TESTNET
-            and not self.LIVE_TRADING_ENABLED
-        ):
+        if not self.BINANCE_USE_TESTNET:
             raise RuntimeError(
-                "Trading is disabled. Enable Testnet "
-                "or explicitly authorize Live trading."
+                "Production Binance access is blocked. "
+                "Only Binance Testnet is permitted."
             )
 
-        if (
-            self.BINANCE_USE_TESTNET
-            and self.LIVE_TRADING_ENABLED
-        ):
+        if self.LIVE_TRADING_ENABLED:
             raise RuntimeError(
-                "Invalid configuration: Testnet and "
-                "Live trading cannot be enabled together."
+                "Live trading is blocked in this development version."
             )
 
 
