@@ -13,9 +13,11 @@ logger = logging.getLogger(__name__)
 class ReconciliationManager:
 
     def sync_positions(self):
+
         db = SessionLocal()
 
         try:
+
             exchange = binance_client.exchange
 
             symbols = [
@@ -25,9 +27,27 @@ class ReconciliationManager:
 
             positions = exchange.fetch_positions(symbols)
 
+            now = datetime.now(timezone.utc)
+
+            # پہلے موجودہ ریکارڈز کو صفر کریں۔
+            # صرف کامیاب Exchange fetch کے بعد یہ کام کیا جا رہا ہے۔
+            existing_records = (
+                db.query(ExchangePosition)
+                .filter(
+                    ExchangePosition.symbol.in_(symbols)
+                )
+                .all()
+            )
+
+            for record in existing_records:
+                record.exchange_quantity = 0.0
+                record.unrealized_pnl = 0.0
+                record.last_synced_at = now
+
             synced = []
 
             for position in positions:
+
                 info = position.get("info") or {}
 
                 symbol = (
@@ -35,7 +55,7 @@ class ReconciliationManager:
                     or info.get("symbol")
                 )
 
-                if not symbol:
+                if not symbol or symbol not in symbols:
                     continue
 
                 position_side = str(
@@ -58,9 +78,7 @@ class ReconciliationManager:
                 mark_price = position.get("markPrice")
                 unrealized_pnl = position.get("unrealizedPnl")
 
-                position_key = (
-                    f"{symbol}:{position_side}"
-                )
+                position_key = f"{symbol}:{position_side}"
 
                 record = (
                     db.query(ExchangePosition)
@@ -72,11 +90,13 @@ class ReconciliationManager:
                 )
 
                 if not record:
+
                     record = ExchangePosition(
                         symbol=symbol,
                         direction=position_side,
                         exchange_position_key=position_key,
                     )
+
                     db.add(record)
 
                 record.exchange_quantity = quantity
@@ -96,12 +116,10 @@ class ReconciliationManager:
                 record.unrealized_pnl = (
                     float(unrealized_pnl)
                     if unrealized_pnl is not None
-                    else None
+                    else 0.0
                 )
 
-                record.last_synced_at = datetime.now(
-                    timezone.utc
-                )
+                record.last_synced_at = now
 
                 synced.append({
                     "symbol": symbol,
@@ -121,8 +139,13 @@ class ReconciliationManager:
             }
 
         except Exception:
+
             db.rollback()
-            logger.exception("Position reconciliation failed")
+
+            logger.exception(
+                "Position reconciliation failed"
+            )
+
             raise
 
         finally:
