@@ -1,3 +1,4 @@
+
 import logging
 
 from config import settings
@@ -6,8 +7,23 @@ from models import CycleEntry, CycleOrder
 
 logger = logging.getLogger(__name__)
 
+EPSILON = 0.00000001
+
 
 class AutomatedEntryManager:
+
+    @staticmethod
+    def _set_isolated_margin(exchange, symbol):
+        try:
+            exchange.set_margin_mode("isolated", symbol)
+        except Exception as error:
+            message = str(error).lower()
+
+            # Binance error -4046 means the margin mode is already isolated.
+            if "-4046" in message or "no need to change margin type" in message:
+                return
+
+            raise
 
     def place_entry(self, db, cycle, entry_type, margin):
 
@@ -20,6 +36,9 @@ class AutomatedEntryManager:
 
         if not settings.BINANCE_API_KEY or not settings.BINANCE_API_SECRET:
             raise RuntimeError("Binance API credentials are missing.")
+
+        if cycle.status != "ACTIVE":
+            raise RuntimeError("Entries can only be placed in an ACTIVE cycle.")
 
         if entry_type not in ("AVERAGING", "OPPOSITE"):
             raise ValueError("Invalid automated entry type.")
@@ -35,7 +54,6 @@ class AutomatedEntryManager:
         if margin > settings.MAX_MARGIN_USDT:
             raise ValueError("Margin exceeds the maximum limit.")
 
-        # ایک Cycle میں ایک ہی قسم کا automated entry دوبارہ نہ لگائیں۔
         existing = (
             db.query(CycleEntry)
             .filter(
@@ -65,7 +83,7 @@ class AutomatedEntryManager:
         if leverage < 1 or leverage > settings.MAX_LEVERAGE:
             raise ValueError("Invalid leverage.")
 
-        exchange.set_margin_mode("isolated", symbol)
+        self._set_isolated_margin(exchange, symbol)
         exchange.set_leverage(leverage, symbol)
 
         raw_quantity = (margin * leverage) / market_price
@@ -78,17 +96,21 @@ class AutomatedEntryManager:
             raise ValueError("Calculated quantity is zero.")
 
         market = exchange.market(symbol)
+        limits = market.get("limits") or {}
 
-        min_amount = (
-            (market.get("limits") or {})
-            .get("amount", {})
-            .get("min")
-        )
+        min_amount = (limits.get("amount") or {}).get("min")
+        min_cost = (limits.get("cost") or {}).get("min")
 
         if min_amount is not None and quantity < float(min_amount):
             raise ValueError("Quantity is below exchange minimum.")
 
-        # مستقل اور قابل شناخت Client Order ID۔
+        estimated_cost = quantity * market_price
+
+        if min_cost is not None and estimated_cost < float(min_cost):
+            raise ValueError(
+                "Order value is below the exchange minimum cost."
+            )
+
         suffix = "A" if entry_type == "AVERAGING" else "O"
         client_order_id = f"bot{cycle.id}{suffix}"
 
@@ -140,7 +162,7 @@ class AutomatedEntryManager:
         order.entry_id = entry.id
         db.add(order)
 
-        # Exchange سے رابطے سے پہلے مقامی ریکارڈ محفوظ کریں۔
+        # Save the local record before contacting Binance.
         db.commit()
 
         try:
@@ -164,8 +186,6 @@ class AutomatedEntryManager:
 
             order.exchange_order_id = str(order_id)
             entry.exchange_order_id = str(order_id)
-
-            # Order ID کو Fetch سے پہلے محفوظ کریں۔
             db.commit()
 
             confirmed = exchange.fetch_order(order_id, symbol)
@@ -188,17 +208,29 @@ class AutomatedEntryManager:
                 confirmed.get("status") or "open"
             ).lower()
 
-            if status == "closed":
-                order.status = "FILLED" if filled > 0 else "CANCELLED"
-                entry.status = "FILLED" if filled > 0 else "CANCELLED"
+            is_terminal = status in (
+                "closed",
+                "canceled",
+                "cancelled",
+                "expired",
+                "rejected",
+            )
 
-            elif status in ("canceled", "cancelled", "expired", "rejected"):
-                order.status = (
-                    "CANCELLED_PARTIAL" if filled > 0 else "CANCELLED"
-                )
-                entry.status = (
-                    "PARTIALLY_FILLED" if filled > 0 else "CANCELLED"
-                )
+            is_fully_filled = (
+                quantity > 0 and filled + EPSILON >= quantity
+            )
+
+            if is_terminal and is_fully_filled:
+                order.status = "FILLED"
+                entry.status = "FILLED"
+
+            elif is_terminal and filled > 0:
+                order.status = "CANCELLED_PARTIAL"
+                entry.status = "PARTIALLY_FILLED"
+
+            elif is_terminal:
+                order.status = "CANCELLED"
+                entry.status = "CANCELLED"
 
             elif filled > 0:
                 order.status = "PARTIALLY_FILLED"
