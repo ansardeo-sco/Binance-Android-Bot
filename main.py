@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 
@@ -6,16 +5,15 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from config import settings
 from database import engine, Base, get_db
 
-from models import (
-    TradingCycle,
-    CycleEntry,
-)
+from models import TradingCycle, CycleEntry
+from bot_settings_model import BotSymbolSettings
+from settings_manager import settings_manager
 
 from binance_client import binance_client
 from engine import trading_engine
@@ -25,7 +23,6 @@ from api_routes import router
 
 
 logging.basicConfig(level=logging.INFO)
-
 logger = logging.getLogger(__name__)
 
 
@@ -36,27 +33,24 @@ ACTIVE_CYCLE_STATUSES = [
 ]
 
 
+# BotSymbolSettings کو بھی ڈیٹابیس میں رجسٹر کریں۔
 Base.metadata.create_all(bind=engine)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
-    task = asyncio.create_task(
-        trading_engine.start()
-    )
+    task = asyncio.create_task(trading_engine.start())
 
     logger.info("Application started.")
 
     yield
 
     trading_engine.stop()
-
     task.cancel()
 
     try:
         await task
-
     except asyncio.CancelledError:
         pass
 
@@ -76,20 +70,8 @@ app.include_router(router)
 
 
 class InitialEntryRequest(BaseModel):
-
     symbol: str
-
     direction: str
-
-    initial_margin: float = Field(
-        default=settings.DEFAULT_INITIAL_MARGIN,
-        gt=0,
-    )
-
-    leverage: int = Field(
-        default=settings.DEFAULT_LEVERAGE,
-        ge=1,
-    )
 
 
 @app.get("/")
@@ -105,20 +87,15 @@ def read_root():
 
 
 @app.get("/health")
-def health_check(
-    db: Session = Depends(get_db),
-):
+def health_check(db: Session = Depends(get_db)):
 
     try:
-
         from sqlalchemy import text
 
         db.execute(text("SELECT 1"))
-
         database_status = "connected"
 
     except Exception:
-
         database_status = "disconnected"
 
     return {
@@ -140,7 +117,6 @@ def get_balance():
     result = binance_client.verify_connection()
 
     if result.get("status") != "Connected":
-
         raise HTTPException(
             status_code=503,
             detail=result.get(
@@ -167,11 +143,34 @@ def create_initial_entry(
 
     try:
 
+        # پہلے منتخب کوائن کی محفوظ سیٹنگز حاصل کریں۔
+        symbol_settings = settings_manager.get_symbol_settings(
+            db,
+            request.symbol,
+        )
+
+        direction = request.direction.strip().upper()
+
+        if direction not in ("LONG", "SHORT"):
+            raise ValueError("Direction must be LONG or SHORT.")
+
+        # جس سمت کی اجازت بند ہو، اس سمت کا سائیکل نہیں بنے گا۔
+        if direction == "LONG" and not symbol_settings["enabled_long"]:
+            raise ValueError(
+                f"LONG trading is disabled for {symbol_settings['symbol']}."
+            )
+
+        if direction == "SHORT" and not symbol_settings["enabled_short"]:
+            raise ValueError(
+                f"SHORT trading is disabled for {symbol_settings['symbol']}."
+            )
+
+        # مارجن اور لیوریج اسی کوائن کی سیٹنگز سے آئیں گے۔
         validated = risk_manager.validate_initial_entry(
-            symbol=request.symbol,
-            direction=request.direction,
-            margin=request.initial_margin,
-            leverage=request.leverage,
+            symbol=symbol_settings["symbol"],
+            direction=direction,
+            margin=symbol_settings["initial_margin"],
+            leverage=symbol_settings["leverage"],
         )
 
         existing_cycle = (
@@ -185,17 +184,14 @@ def create_initial_entry(
         )
 
         if existing_cycle:
-
             raise HTTPException(
                 status_code=409,
                 detail=(
                     "An active or unconfirmed cycle already exists "
-                    "for this symbol and direction. "
-                    "Resolve it before creating another entry."
+                    "for this symbol and direction."
                 ),
             )
 
-        # ایک کوائن میں تمام سمتوں کی Active Cycles گنیں۔
         active_count = (
             db.query(TradingCycle)
             .filter(
@@ -206,34 +202,34 @@ def create_initial_entry(
         )
 
         if active_count >= settings.MAX_ACTIVE_CYCLES_PER_SYMBOL:
-
             raise HTTPException(
                 status_code=409,
-                detail=(
-                    "Maximum active cycles limit reached for this symbol. "
-                    "Close or resolve an existing cycle before creating "
-                    "another entry."
-                ),
+                detail="Maximum active cycles limit reached for this symbol.",
             )
 
+        # سائیکل میں سیٹنگز کی مستقل نقل محفوظ ہوگی۔
+        # بعد میں کوائن کی عمومی سیٹنگز بدلنے سے پرانا سائیکل متاثر نہیں ہوگا۔
         new_cycle = TradingCycle(
             symbol=validated["symbol"],
             direction=validated["direction"],
             status="ACTIVE",
+
             initial_margin=validated["margin"],
-            averaging_margin=settings.DEFAULT_AVERAGING_MARGIN,
-            opposite_margin=settings.DEFAULT_OPPOSITE_MARGIN,
+            averaging_margin=symbol_settings["averaging_margin"],
+            opposite_margin=symbol_settings["opposite_margin"],
+
             leverage=validated["leverage"],
-            tp_percent=settings.DEFAULT_TP_PERCENT,
-            sl_percent=settings.DEFAULT_SL_PERCENT,
-            warning_percent=settings.DEFAULT_WARNING_PERCENT,
-            opposite_percent=settings.DEFAULT_OPPOSITE_PERCENT,
-            averaging_percent=settings.DEFAULT_AVERAGING_PERCENT,
-            reentry_percent=settings.DEFAULT_REENTRY_PERCENT,
+
+            tp_percent=symbol_settings["tp_percent"],
+            sl_percent=symbol_settings["sl_percent"],
+
+            warning_percent=symbol_settings["warning_percent"],
+            opposite_percent=symbol_settings["opposite_percent"],
+            averaging_percent=symbol_settings["averaging_percent"],
+            reentry_percent=symbol_settings["reentry_percent"],
         )
 
         db.add(new_cycle)
-
         db.commit()
         db.refresh(new_cycle)
 
@@ -243,7 +239,6 @@ def create_initial_entry(
         )
 
         if result.get("order_status") == "UNKNOWN":
-
             new_cycle.status = "ORDER_UNCONFIRMED"
             db.commit()
 
@@ -254,6 +249,18 @@ def create_initial_entry(
             "symbol": new_cycle.symbol,
             "direction": new_cycle.direction,
             "status": new_cycle.status,
+            "settings_snapshot": {
+                "initial_margin": new_cycle.initial_margin,
+                "averaging_margin": new_cycle.averaging_margin,
+                "opposite_margin": new_cycle.opposite_margin,
+                "leverage": new_cycle.leverage,
+                "tp_percent": new_cycle.tp_percent,
+                "sl_percent": new_cycle.sl_percent,
+                "warning_percent": new_cycle.warning_percent,
+                "opposite_percent": new_cycle.opposite_percent,
+                "averaging_percent": new_cycle.averaging_percent,
+                "reentry_percent": new_cycle.reentry_percent,
+            },
             "order_placed": bool(result.get("success")),
             "order": result,
         }
@@ -262,7 +269,6 @@ def create_initial_entry(
         raise
 
     except ValueError as error:
-
         db.rollback()
 
         raise HTTPException(
@@ -271,21 +277,16 @@ def create_initial_entry(
         )
 
     except RuntimeError as error:
-
         db.rollback()
 
         if new_cycle is not None:
-
             saved_cycle = (
                 db.query(TradingCycle)
-                .filter(
-                    TradingCycle.id == new_cycle.id
-                )
+                .filter(TradingCycle.id == new_cycle.id)
                 .first()
             )
 
             if saved_cycle:
-
                 unknown_entry = (
                     db.query(CycleEntry)
                     .filter(
@@ -309,27 +310,19 @@ def create_initial_entry(
         )
 
     except Exception:
-
         db.rollback()
 
-        logger.exception(
-            "Initial entry request failed."
-        )
+        logger.exception("Initial entry request failed.")
 
         if new_cycle is not None:
-
             try:
-
                 saved_cycle = (
                     db.query(TradingCycle)
-                    .filter(
-                        TradingCycle.id == new_cycle.id
-                    )
+                    .filter(TradingCycle.id == new_cycle.id)
                     .first()
                 )
 
                 if saved_cycle:
-
                     unknown_entry = (
                         db.query(CycleEntry)
                         .filter(
@@ -360,18 +353,12 @@ def create_initial_entry(
 
 
 @app.get(f"{settings.API_PREFIX}/cycles/active")
-def get_active_cycles(
-    db: Session = Depends(get_db),
-):
+def get_active_cycles(db: Session = Depends(get_db)):
 
     cycles = (
         db.query(TradingCycle)
-        .filter(
-            TradingCycle.status.in_(ACTIVE_CYCLE_STATUSES)
-        )
-        .order_by(
-            TradingCycle.created_at.desc()
-        )
+        .filter(TradingCycle.status.in_(ACTIVE_CYCLE_STATUSES))
+        .order_by(TradingCycle.created_at.desc())
         .all()
     )
 
@@ -404,14 +391,11 @@ def get_cycle(
 
     cycle = (
         db.query(TradingCycle)
-        .filter(
-            TradingCycle.id == cycle_id
-        )
+        .filter(TradingCycle.id == cycle_id)
         .first()
     )
 
     if not cycle:
-
         raise HTTPException(
             status_code=404,
             detail="Trading cycle not found.",
@@ -419,9 +403,7 @@ def get_cycle(
 
     entries = (
         db.query(CycleEntry)
-        .filter(
-            CycleEntry.cycle_id == cycle.id
-        )
+        .filter(CycleEntry.cycle_id == cycle.id)
         .all()
     )
 
@@ -434,6 +416,18 @@ def get_cycle(
         "total_filled_quantity": cycle.total_filled_quantity,
         "take_profit_price": cycle.take_profit_price,
         "reentry_price": cycle.reentry_price,
+        "settings_snapshot": {
+            "initial_margin": cycle.initial_margin,
+            "averaging_margin": cycle.averaging_margin,
+            "opposite_margin": cycle.opposite_margin,
+            "leverage": cycle.leverage,
+            "tp_percent": cycle.tp_percent,
+            "sl_percent": cycle.sl_percent,
+            "warning_percent": cycle.warning_percent,
+            "opposite_percent": cycle.opposite_percent,
+            "averaging_percent": cycle.averaging_percent,
+            "reentry_percent": cycle.reentry_percent,
+        },
         "entries": [
             {
                 "id": entry.id,
