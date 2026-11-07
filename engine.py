@@ -76,8 +76,6 @@ class TradingEngine:
 
             try:
 
-                # پہلے مکمل شدہ TP کے Re-entry ریکارڈ چیک کریں۔
-                # مخالف سمت کی فعال Cycle ہو تو Re-entry انتظار کرے گی۔
                 try:
                     await reentry_manager.process_waiting(db)
 
@@ -178,20 +176,10 @@ class TradingEngine:
                 / average_price
             ) * 100
 
-            profit_percent = (
-                (price - average_price)
-                / average_price
-            ) * 100
-
         elif cycle.direction == "SHORT":
 
             adverse_percent = (
                 (price - average_price)
-                / average_price
-            ) * 100
-
-            profit_percent = (
-                (average_price - price)
                 / average_price
             ) * 100
 
@@ -240,7 +228,7 @@ class TradingEngine:
             db.commit()
             return
 
-        # TP مکمل ہونے پر Cycle بند ہونے کے عمل میں جائے گی۔
+        # Take Profit پہلے چیک ہوگا۔
         tp_result = take_profit_manager.process_cycle(
             db=db,
             cycle=cycle,
@@ -251,7 +239,7 @@ class TradingEngine:
             db.commit()
             return
 
-        # پہلے 7% پر Opposite Position۔
+        # 7% پر Opposite Position کی کوشش۔
         if adverse_percent >= cycle.opposite_percent:
 
             opposite_result = (
@@ -265,9 +253,13 @@ class TradingEngine:
             db.commit()
 
             if opposite_result.get("triggered"):
-                return
+                logger.info(
+                    "Opposite position submitted for cycle %s.",
+                    cycle.id,
+                )
 
-        # پھر 9% پر صرف ایک مرتبہ Averaging۔
+        # 9% پر Averaging بھی اسی مرحلے میں چیک ہوگی۔
+        # Opposite Position لگنے کے بعد یہاں سے عمل نہیں رکے گا۔
         if adverse_percent >= cycle.averaging_percent:
 
             averaging_result = (
@@ -279,6 +271,12 @@ class TradingEngine:
             )
 
             db.commit()
+
+            if averaging_result.get("triggered"):
+                logger.info(
+                    "Averaging submitted for cycle %s.",
+                    cycle.id,
+                )
 
         db.commit()
 
