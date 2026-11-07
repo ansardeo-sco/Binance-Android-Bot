@@ -1,3 +1,4 @@
+
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -21,6 +22,7 @@ from stop_loss_manager import stop_loss_manager
 
 from averaging_manager import averaging_manager
 from opposite_position_manager import opposite_position_manager
+from reentry_manager import reentry_manager
 
 
 logger = logging.getLogger(__name__)
@@ -46,9 +48,13 @@ class TradingEngine:
                 await self.process_active_cycles()
 
             except Exception:
-                logger.exception("Trading engine processing error.")
+                logger.exception(
+                    "Trading engine processing error."
+                )
 
-            await asyncio.sleep(settings.MARKET_POLL_INTERVAL)
+            await asyncio.sleep(
+                settings.MARKET_POLL_INTERVAL
+            )
 
     def stop(self):
         self.running = False
@@ -70,16 +76,34 @@ class TradingEngine:
 
             try:
 
+                # پہلے مکمل شدہ TP کے Re-entry ریکارڈ چیک کریں۔
+                # مخالف سمت کی فعال Cycle ہو تو Re-entry انتظار کرے گی۔
+                try:
+                    await reentry_manager.process_waiting(db)
+
+                except Exception:
+                    db.rollback()
+
+                    logger.exception(
+                        "Re-entry processing failed."
+                    )
+
                 cycles = (
                     db.query(TradingCycle)
-                    .filter(TradingCycle.status == "ACTIVE")
+                    .filter(
+                        TradingCycle.status == "ACTIVE"
+                    )
+                    .order_by(TradingCycle.id.asc())
                     .all()
                 )
 
                 for cycle in cycles:
 
                     try:
-                        await self.process_cycle(db, cycle)
+                        await self.process_cycle(
+                            db,
+                            cycle,
+                        )
 
                     except Exception:
 
@@ -93,13 +117,17 @@ class TradingEngine:
             finally:
                 db.close()
 
-    async def process_cycle(self, db: Session, cycle: TradingCycle):
+    async def process_cycle(
+        self,
+        db: Session,
+        cycle: TradingCycle,
+    ):
 
         price = await binance_client.get_market_price(
             cycle.symbol
         )
 
-        if price <= 0:
+        if not price or price <= 0:
             return
 
         entries = (
@@ -136,7 +164,9 @@ class TradingEngine:
         if weighted_value <= 0:
             return
 
-        average_price = weighted_value / total_quantity
+        average_price = (
+            weighted_value / total_quantity
+        )
 
         cycle.average_entry_price = average_price
         cycle.total_filled_quantity = total_quantity
@@ -144,25 +174,33 @@ class TradingEngine:
         if cycle.direction == "LONG":
 
             adverse_percent = (
-                (average_price - price) / average_price
+                (average_price - price)
+                / average_price
             ) * 100
 
             profit_percent = (
-                (price - average_price) / average_price
+                (price - average_price)
+                / average_price
             ) * 100
 
         elif cycle.direction == "SHORT":
 
             adverse_percent = (
-                (price - average_price) / average_price
+                (price - average_price)
+                / average_price
             ) * 100
 
             profit_percent = (
-                (average_price - price) / average_price
+                (average_price - price)
+                / average_price
             ) * 100
 
         else:
-            logger.error("Invalid direction: %s", cycle.direction)
+
+            logger.error(
+                "Invalid direction: %s",
+                cycle.direction,
+            )
             return
 
         self._record_warning(
@@ -172,7 +210,7 @@ class TradingEngine:
             adverse_percent,
         )
 
-        # انفرادی Entry کا Stop Loss پہلے چیک ہوگا۔
+        # ہر Entry کا Stop Loss الگ چیک ہوگا۔
         stop_result = stop_loss_manager.process_cycle(
             db=db,
             cycle=cycle,
@@ -183,6 +221,7 @@ class TradingEngine:
             db.commit()
             return
 
+        # زیرِ تصدیق Close Order کے دوران نیا Close Order نہ لگائیں۔
         pending_close = (
             db.query(CycleOrder)
             .filter(
@@ -201,7 +240,7 @@ class TradingEngine:
             db.commit()
             return
 
-        # اگر TP مکمل ہو تو مزید خودکار Entry نہیں لگے گی۔
+        # TP مکمل ہونے پر Cycle بند ہونے کے عمل میں جائے گی۔
         tp_result = take_profit_manager.process_cycle(
             db=db,
             cycle=cycle,
@@ -212,8 +251,7 @@ class TradingEngine:
             db.commit()
             return
 
-        # مخالف سمت کی Entry پہلے، پھر Averaging۔
-        # دونوں Thresholds تک قیمت پہنچنے پر دونوں مراحل چل سکتے ہیں۔
+        # پہلے 7% پر Opposite Position۔
         if adverse_percent >= cycle.opposite_percent:
 
             opposite_result = (
@@ -229,6 +267,7 @@ class TradingEngine:
             if opposite_result.get("triggered"):
                 return
 
+        # پھر 9% پر صرف ایک مرتبہ Averaging۔
         if adverse_percent >= cycle.averaging_percent:
 
             averaging_result = (
@@ -267,7 +306,9 @@ class TradingEngine:
             percentage=adverse_percent,
             status="RECORDED",
             message="Warning threshold reached.",
-            idempotency_key=f"cycle-{cycle.id}-warning",
+            idempotency_key=(
+                f"cycle-{cycle.id}-warning"
+            ),
             created_at=datetime.now(timezone.utc),
         )
 
