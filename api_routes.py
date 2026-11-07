@@ -1,10 +1,19 @@
 
 import logging
+import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Header,
+    Query,
+)
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import get_db
+from config import settings
 
 from models import (
     Notification,
@@ -17,6 +26,8 @@ from notification_manager import notification_manager
 from order_status_manager import order_status_manager
 from reconciliation_manager import reconciliation_manager
 
+from settings_manager import settings_manager
+
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +35,143 @@ router = APIRouter(
     prefix="/api/v1",
     tags=["Bot Management"],
 )
+
+
+class SymbolSettingsUpdate(BaseModel):
+
+    enabled_long: bool | None = None
+    enabled_short: bool | None = None
+
+    initial_margin: float | None = Field(default=None, gt=0)
+    averaging_margin: float | None = Field(default=None, gt=0)
+    opposite_margin: float | None = Field(default=None, gt=0)
+
+    leverage: int | None = Field(default=None, ge=1)
+
+    tp_percent: float | None = Field(default=None, gt=0)
+    sl_percent: float | None = Field(default=None, gt=0)
+
+    warning_percent: float | None = Field(default=None, gt=0)
+    opposite_percent: float | None = Field(default=None, gt=0)
+    averaging_percent: float | None = Field(default=None, gt=0)
+    reentry_percent: float | None = Field(default=None, gt=0)
+
+
+def require_admin_token(
+    x_bot_admin_token: str | None = Header(
+        default=None,
+        alias="X-Bot-Admin-Token",
+    ),
+):
+
+    configured_token = settings.BOT_ADMIN_TOKEN
+
+    if not configured_token:
+        raise HTTPException(
+            status_code=503,
+            detail="Settings API is locked. Admin token is not configured.",
+        )
+
+    if (
+        not x_bot_admin_token
+        or not secrets.compare_digest(
+            x_bot_admin_token,
+            configured_token,
+        )
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid admin token.",
+        )
+
+
+@router.get("/settings")
+def get_all_symbol_settings(
+    db: Session = Depends(get_db),
+):
+
+    try:
+        return settings_manager.get_all_settings(db)
+
+    except Exception as error:
+
+        logger.exception("Unable to load symbol settings.")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to load symbol settings.",
+        ) from error
+
+
+@router.get("/settings/{symbol}")
+def get_symbol_settings(
+    symbol: str,
+    db: Session = Depends(get_db),
+):
+
+    try:
+        return settings_manager.get_symbol_settings(
+            db,
+            symbol,
+        )
+
+    except ValueError as error:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        ) from error
+
+    except Exception as error:
+
+        logger.exception("Unable to load symbol settings.")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to load symbol settings.",
+        ) from error
+
+
+@router.put("/settings/{symbol}")
+def update_symbol_settings(
+    symbol: str,
+    request: SymbolSettingsUpdate,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_admin_token),
+):
+
+    updates = request.model_dump(
+        exclude_unset=True,
+        exclude_none=True,
+    )
+
+    try:
+
+        return {
+            "success": True,
+            "message": "Symbol settings saved.",
+            "settings": settings_manager.update_symbol_settings(
+                db,
+                symbol,
+                updates,
+            ),
+        }
+
+    except ValueError as error:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        ) from error
+
+    except Exception as error:
+
+        logger.exception("Unable to update symbol settings.")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to save symbol settings.",
+        ) from error
 
 
 @router.get("/notifications")
