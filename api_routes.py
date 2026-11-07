@@ -1,3 +1,4 @@
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -7,6 +8,7 @@ from models import (
     BotEvent,
     ExchangePosition,
     CycleOrder,
+    ReentryRecord,
 )
 
 from notification_manager import notification_manager
@@ -14,7 +16,10 @@ from order_status_manager import order_status_manager
 from reconciliation_manager import reconciliation_manager
 
 
-router = APIRouter(prefix="/api/v1", tags=["Bot Management"])
+router = APIRouter(
+    prefix="/api/v1",
+    tags=["Bot Management"],
+)
 
 
 @router.get("/notifications")
@@ -28,7 +33,9 @@ def get_notifications(
     query = db.query(Notification)
 
     if unread_only:
-        query = query.filter(Notification.is_read.is_(False))
+        query = query.filter(
+            Notification.is_read.is_(False)
+        )
 
     records = (
         query.order_by(Notification.id.desc())
@@ -147,7 +154,10 @@ def reconcile_positions():
     except Exception as error:
         raise HTTPException(
             status_code=503,
-            detail=f"Position synchronization failed: {error}",
+            detail=(
+                "Position synchronization failed: "
+                f"{error}"
+            ),
         )
 
 
@@ -165,5 +175,72 @@ def synchronize_orders():
     except Exception as error:
         raise HTTPException(
             status_code=503,
-            detail=f"Order synchronization failed: {error}",
+            detail=(
+                "Order synchronization failed: "
+                f"{error}"
+            ),
         )
+
+
+@router.get("/reentries")
+def get_reentries(
+    status: str = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    limit = max(1, min(limit, 100))
+
+    query = db.query(ReentryRecord)
+
+    if status:
+        allowed_statuses = {
+            "WAITING",
+            "PROCESSING",
+            "TRIGGERED",
+            "ORDER_UNCONFIRMED",
+        }
+
+        normalized_status = status.strip().upper()
+
+        if normalized_status not in allowed_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid re-entry status.",
+            )
+
+        query = query.filter(
+            ReentryRecord.status == normalized_status
+        )
+
+    records = (
+        query.order_by(ReentryRecord.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "count": len(records),
+        "reentries": [
+            {
+                "id": item.id,
+                "cycle_id": item.cycle_id,
+                "new_cycle_id": item.new_cycle_id,
+                "symbol": item.symbol,
+                "direction": item.direction,
+                "reference_close_price": (
+                    item.reference_close_price
+                ),
+                "trigger_price": item.trigger_price,
+                "status": item.status,
+                "created_at": (
+                    item.created_at.isoformat()
+                    if item.created_at else None
+                ),
+                "triggered_at": (
+                    item.triggered_at.isoformat()
+                    if item.triggered_at else None
+                ),
+            }
+            for item in records
+        ],
+    }
