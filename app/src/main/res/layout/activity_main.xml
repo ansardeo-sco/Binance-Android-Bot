@@ -94,7 +94,7 @@
 
         </LinearLayout>
 
-        <!-- BALANCE SECTION -->
+        <!-- ACCOUNT OVERVIEW -->
 
         <TextView
             android:layout_width="match_parent"
@@ -172,7 +172,7 @@
 
         </LinearLayout>
 
-        <!-- ACTIVE CYCLES -->
+        <!-- ACTIVE CYCLES COUNT -->
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -212,7 +212,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="LIVE MONITORING"
+                android:text="MONITORING"
                 android:textColor="#53C68C"
                 android:textSize="10sp"
                 android:textStyle="bold" />
@@ -233,7 +233,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Select the coin and direction for a new trading cycle."
+            android:text="Select a coin to view its saved trading settings."
             android:textColor="#8190A5"
             android:textSize="12sp"
             android:paddingBottom="14dp" />
@@ -244,8 +244,6 @@
             android:orientation="vertical"
             android:background="#172337"
             android:padding="16dp">
-
-            <!-- SYMBOL -->
 
             <TextView
                 android:layout_width="match_parent"
@@ -263,8 +261,6 @@
                 android:background="#25364D"
                 android:paddingStart="10dp"
                 android:paddingEnd="10dp" />
-
-            <!-- DIRECTION -->
 
             <TextView
                 android:layout_width="match_parent"
@@ -305,8 +301,6 @@
 
             </RadioGroup>
 
-            <!-- MARGIN -->
-
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -322,16 +316,15 @@
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
                 android:background="#25364D"
-                android:hint="Enter margin"
+                android:hint="Initial margin"
                 android:text="2.0"
                 android:textColor="#FFFFFF"
                 android:textColorHint="#8190A5"
                 android:inputType="numberDecimal"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
-                android:singleLine="true" />
-
-            <!-- LEVERAGE -->
+                android:singleLine="true"
+                android:enabled="false" />
 
             <TextView
                 android:layout_width="match_parent"
@@ -349,9 +342,8 @@
                 android:layout_height="48dp"
                 android:background="#25364D"
                 android:paddingStart="10dp"
-                android:paddingEnd="10dp" />
-
-            <!-- TRADE BUTTON -->
+                android:paddingEnd="10dp"
+                android:enabled="false" />
 
             <Button
                 android:id="@+id/btnSubmitEntry"
@@ -369,13 +361,36 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Trading will be enabled after Testnet verification."
+                android:text="Trading will remain disabled until Testnet verification."
                 android:textColor="#8190A5"
                 android:textSize="10sp"
                 android:gravity="center"
                 android:paddingTop="9dp" />
 
         </LinearLayout>
+
+        <!-- SELECTED COIN SETTINGS -->
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="SELECTED COIN SETTINGS"
+            android:textColor="#FFFFFF"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:paddingTop="22dp"
+            android:paddingBottom="10dp" />
+
+        <TextView
+            android:id="@+id/txtSymbolSettings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Loading selected coin settings..."
+            android:textColor="#C2CEDD"
+            android:textSize="13sp"
+            android:background="#172337"
+            android:padding="15dp"
+            android:lineSpacingExtra="5dp" />
 
         <!-- ACTIVE POSITIONS -->
 
@@ -417,7 +432,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="BINANCE FUTURES BOT  |  VERSION 2.0"
+            android:text="BINANCE FUTURES BOT | VERSION 2.0"
             android:textColor="#65758B"
             android:textSize="10sp"
             android:gravity="center"
