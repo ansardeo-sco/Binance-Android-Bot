@@ -32,10 +32,12 @@ class OrderStatusManager:
     }
 
     def sync_pending_orders(self):
+
         db = SessionLocal()
         results = []
 
         try:
+
             orders = (
                 db.query(CycleOrder)
                 .filter(
@@ -46,184 +48,200 @@ class OrderStatusManager:
             )
 
             for order in orders:
+
+                order_id_local = order.id
+
                 try:
-                    exchange_order = binance_fetch_order(order)
 
-                    if not exchange_order:
-                        continue
+                    # ہر آرڈر کی تبدیلی الگ Savepoint میں۔
+                    with db.begin_nested():
 
-                    old_filled = float(
-                        order.filled_quantity or 0
-                    )
+                        exchange_order = binance_fetch_order(order)
 
-                    new_filled = float(
-                        exchange_order.get("filled") or 0
-                    )
+                        if not exchange_order:
+                            continue
 
-                    new_filled = max(
-                        old_filled,
-                        new_filled,
-                    )
-
-                    fill_delta = max(
-                        0.0,
-                        new_filled - old_filled,
-                    )
-
-                    average = exchange_order.get("average")
-
-                    exchange_status = str(
-                        exchange_order.get("status") or "open"
-                    ).lower()
-
-                    entry = None
-
-                    if order.entry_id:
-                        entry = (
-                            db.query(CycleEntry)
-                            .filter(
-                                CycleEntry.id == order.entry_id
-                            )
-                            .first()
+                        old_filled = float(
+                            order.filled_quantity or 0
                         )
 
-                    order_id = exchange_order.get("id")
+                        new_filled = float(
+                            exchange_order.get("filled") or 0
+                        )
 
-                    if order_id:
-                        order.exchange_order_id = str(order_id)
+                        new_filled = max(
+                            old_filled,
+                            new_filled,
+                        )
+
+                        fill_delta = max(
+                            0.0,
+                            new_filled - old_filled,
+                        )
+
+                        average = exchange_order.get("average")
+
+                        exchange_status = str(
+                            exchange_order.get("status") or "open"
+                        ).lower()
+
+                        entry = None
+
+                        if order.entry_id:
+                            entry = (
+                                db.query(CycleEntry)
+                                .filter(
+                                    CycleEntry.id == order.entry_id
+                                )
+                                .first()
+                            )
+
+                        exchange_id = exchange_order.get("id")
+
+                        if exchange_id:
+                            order.exchange_order_id = str(exchange_id)
+
+                            if entry:
+                                entry.exchange_order_id = str(exchange_id)
+
+                        order.filled_quantity = new_filled
+
+                        if average is not None:
+                            order.average_fill_price = float(average)
+
+                        if entry and fill_delta > 0:
+
+                            if order.reduce_position:
+
+                                entry.remaining_quantity = max(
+                                    0.0,
+                                    float(
+                                        entry.remaining_quantity or 0
+                                    ) - fill_delta,
+                                )
+
+                            else:
+
+                                entry.filled_quantity = new_filled
+
+                                entry.remaining_quantity = (
+                                    float(
+                                        entry.remaining_quantity or 0
+                                    ) + fill_delta
+                                )
+
+                                if average is not None:
+                                    entry.entry_price = float(average)
+
+                                if not entry.filled_at:
+                                    entry.filled_at = datetime.now(
+                                        timezone.utc
+                                    )
+
+                        requested = float(
+                            order.requested_quantity or 0
+                        )
+
+                        if exchange_status == "closed":
+
+                            if (
+                                requested > 0
+                                and new_filled + EPSILON < requested
+                            ):
+                                order.status = "CANCELLED_PARTIAL"
+                            else:
+                                order.status = (
+                                    "FILLED"
+                                    if new_filled > 0
+                                    else "CANCELLED"
+                                )
+
+                        elif exchange_status in self.TERMINAL_STATUSES:
+
+                            order.status = (
+                                "CANCELLED_PARTIAL"
+                                if new_filled > 0
+                                else "CANCELLED"
+                            )
+
+                        elif new_filled > 0:
+
+                            order.status = "PARTIALLY_FILLED"
+
+                        else:
+
+                            order.status = "PENDING"
 
                         if entry:
-                            entry.exchange_order_id = str(
-                                order_id
-                            )
 
-                    order.filled_quantity = new_filled
+                            if order.reduce_position:
 
-                    if average is not None:
-                        order.average_fill_price = float(
-                            average
-                        )
+                                if (
+                                    float(
+                                        entry.remaining_quantity or 0
+                                    ) <= EPSILON
+                                ):
+                                    entry.remaining_quantity = 0.0
+                                    entry.status = "CLOSED"
+                                    entry.closed_at = datetime.now(
+                                        timezone.utc
+                                    )
 
-                    if entry and fill_delta > 0:
-
-                        if order.reduce_position:
-
-                            entry.remaining_quantity = max(
-                                0.0,
-                                float(
-                                    entry.remaining_quantity or 0
-                                ) - fill_delta,
-                            )
-
-                        else:
-
-                            entry.filled_quantity = new_filled
-
-                            entry.remaining_quantity = (
-                                float(
-                                    entry.remaining_quantity or 0
-                                ) + fill_delta
-                            )
-
-                            if average is not None:
-                                entry.entry_price = float(
-                                    average
-                                )
-
-                            if not entry.filled_at:
-                                entry.filled_at = datetime.now(
-                                    timezone.utc
-                                )
-
-                    if exchange_status == "closed":
-
-                        order.status = (
-                            "FILLED"
-                            if new_filled > 0
-                            else "CANCELLED"
-                        )
-
-                    elif exchange_status in self.TERMINAL_STATUSES:
-
-                        order.status = (
-                            "CANCELLED_PARTIAL"
-                            if new_filled > 0
-                            else "CANCELLED"
-                        )
-
-                    elif new_filled > 0:
-
-                        order.status = "PARTIALLY_FILLED"
-
-                    else:
-
-                        order.status = "PENDING"
-
-                    if entry:
-
-                        if order.reduce_position:
-
-                            if (
-                                float(
-                                    entry.remaining_quantity or 0
-                                ) <= EPSILON
-                            ):
-                                entry.remaining_quantity = 0.0
-                                entry.status = "CLOSED"
-                                entry.closed_at = datetime.now(
-                                    timezone.utc
-                                )
+                                else:
+                                    entry.status = "PARTIALLY_FILLED"
 
                             else:
-                                entry.status = "PARTIALLY_FILLED"
 
-                        else:
+                                if (
+                                    exchange_status == "closed"
+                                    and new_filled > 0
+                                ):
+                                    entry.status = "FILLED"
 
-                            if (
-                                exchange_status == "closed"
-                                and new_filled > 0
-                            ):
-                                entry.status = "FILLED"
+                                elif new_filled > 0:
+                                    entry.status = "PARTIALLY_FILLED"
 
-                            elif new_filled > 0:
-                                entry.status = "PARTIALLY_FILLED"
+                                elif (
+                                    exchange_status
+                                    in self.TERMINAL_STATUSES
+                                ):
+                                    entry.status = "CANCELLED"
 
-                            elif (
-                                exchange_status
-                                in self.TERMINAL_STATUSES
-                            ):
-                                entry.status = "CANCELLED"
+                                else:
+                                    entry.status = "PENDING"
 
-                            else:
-                                entry.status = "PENDING"
+                        self._update_cycle_status(
+                            db,
+                            order.cycle_id,
+                        )
 
-                    results.append({
-                        "local_order_id": order.id,
-                        "exchange_order_id": (
-                            order.exchange_order_id
-                        ),
-                        "client_order_id": order.client_order_id,
-                        "status": order.status,
-                        "filled_quantity": new_filled,
-                        "new_fill_quantity": fill_delta,
-                        "remaining_quantity": (
-                            entry.remaining_quantity
-                            if entry else None
-                        ),
-                    })
+                        result_item = {
+                            "local_order_id": order.id,
+                            "exchange_order_id": order.exchange_order_id,
+                            "client_order_id": order.client_order_id,
+                            "status": order.status,
+                            "filled_quantity": new_filled,
+                            "new_fill_quantity": fill_delta,
+                            "remaining_quantity": (
+                                entry.remaining_quantity
+                                if entry else None
+                            ),
+                        }
 
-                    self._update_cycle_status(
-                        db,
-                        order.cycle_id,
-                    )
+                    results.append(result_item)
 
                 except Exception as error:
 
+                    db.rollback()
+
                     logger.exception(
                         "Order %s synchronization failed: %s",
-                        order.id,
+                        order_id_local,
                         error,
                     )
+
+                    # اگلے آرڈر کے لیے تازہ Session state حاصل کریں۔
+                    continue
 
             db.commit()
             return results
@@ -286,6 +304,7 @@ class OrderStatusManager:
             total_value += quantity * price
 
         if total_quantity <= EPSILON:
+
             logger.warning(
                 "No confirmed TP close fills for cycle %s. "
                 "Re-entry not created.",
@@ -293,15 +312,14 @@ class OrderStatusManager:
             )
             return
 
-        reference_price = (
-            total_value / total_quantity
-        )
+        reference_price = total_value / total_quantity
 
         reentry_percent = float(
             cycle.reentry_percent or 0
         )
 
         if reentry_percent <= 0:
+
             logger.warning(
                 "Invalid re-entry percentage for cycle %s.",
                 cycle.id,
@@ -377,9 +395,7 @@ class OrderStatusManager:
             db.query(CycleOrder)
             .filter(
                 CycleOrder.cycle_id == cycle_id,
-                CycleOrder.status.in_(
-                    OPEN_ORDER_STATUSES
-                ),
+                CycleOrder.status.in_(OPEN_ORDER_STATUSES),
             )
             .count()
         )
@@ -398,8 +414,7 @@ class OrderStatusManager:
         )
 
         all_entries_closed = all(
-            float(entry.remaining_quantity or 0)
-            <= EPSILON
+            float(entry.remaining_quantity or 0) <= EPSILON
             for entry in entries
         )
 
@@ -409,23 +424,15 @@ class OrderStatusManager:
             and unresolved_entries == 0
         ):
 
-            was_closing_tp = (
-                cycle.status == "CLOSING_TP"
-            )
+            was_closing_tp = cycle.status == "CLOSING_TP"
 
             cycle.status = "CLOSED"
 
             if not cycle.closed_at:
-                cycle.closed_at = datetime.now(
-                    timezone.utc
-                )
+                cycle.closed_at = datetime.now(timezone.utc)
 
-            # صرف مکمل تصدیق شدہ Take Profit پر Re-entry۔
             if was_closing_tp:
-                cls._create_tp_reentry(
-                    db,
-                    cycle,
-                )
+                cls._create_tp_reentry(db, cycle)
 
             return
 
@@ -434,9 +441,7 @@ class OrderStatusManager:
             .filter(
                 CycleOrder.cycle_id == cycle_id,
                 CycleOrder.reduce_position.is_(True),
-                CycleOrder.status.in_(
-                    OPEN_ORDER_STATUSES
-                ),
+                CycleOrder.status.in_(OPEN_ORDER_STATUSES),
             )
             .count()
         )
@@ -474,9 +479,7 @@ def binance_fetch_order(order):
             None,
             order.symbol,
             {
-                "origClientOrderId": (
-                    order.client_order_id
-                )
+                "origClientOrderId": order.client_order_id
             },
         )
 
