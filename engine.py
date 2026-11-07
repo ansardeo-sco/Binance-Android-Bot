@@ -10,8 +10,13 @@ from models import (
     TradingCycle,
     CycleEntry,
     CycleEvent,
+    CycleOrder,
 )
+
 from binance_client import binance_client
+from order_status_manager import order_status_manager
+from take_profit_manager import take_profit_manager
+from stop_loss_manager import stop_loss_manager
 
 
 logger = logging.getLogger(__name__)
@@ -24,18 +29,20 @@ class TradingEngine:
         self._lock = asyncio.Lock()
 
     async def start(self):
+
         if self.running:
             return
 
         self.running = True
-        logger.info("Trading engine started")
+        logger.info("Trading engine started.")
 
         while self.running:
+
             try:
                 await self.process_active_cycles()
 
             except Exception:
-                logger.exception("Trading engine processing error")
+                logger.exception("Trading engine processing error.")
 
             await asyncio.sleep(
                 settings.MARKET_POLL_INTERVAL
@@ -43,10 +50,20 @@ class TradingEngine:
 
     def stop(self):
         self.running = False
-        logger.info("Trading engine stopped")
+        logger.info("Trading engine stopped.")
 
     async def process_active_cycles(self):
+
         async with self._lock:
+
+            try:
+                order_status_manager.sync_pending_orders()
+
+            except Exception:
+                logger.exception(
+                    "Pending order synchronization failed."
+                )
+
             db = SessionLocal()
 
             try:
@@ -57,10 +74,13 @@ class TradingEngine:
                 )
 
                 for cycle in cycles:
+
                     try:
                         await self.process_cycle(db, cycle)
 
                     except Exception:
+                        db.rollback()
+
                         logger.exception(
                             "Cycle processing failed: %s",
                             cycle.id,
@@ -74,6 +94,7 @@ class TradingEngine:
         db: Session,
         cycle: TradingCycle,
     ):
+
         price = await binance_client.get_market_price(
             cycle.symbol
         )
@@ -85,8 +106,12 @@ class TradingEngine:
             db.query(CycleEntry)
             .filter(
                 CycleEntry.cycle_id == cycle.id,
-                CycleEntry.status == "FILLED",
+                CycleEntry.status.in_([
+                    "FILLED",
+                    "PARTIALLY_FILLED",
+                ]),
                 CycleEntry.remaining_quantity > 0,
+                CycleEntry.entry_price.isnot(None),
             )
             .all()
         )
@@ -95,7 +120,7 @@ class TradingEngine:
             return
 
         total_quantity = sum(
-            entry.remaining_quantity
+            float(entry.remaining_quantity or 0)
             for entry in entries
         )
 
@@ -103,9 +128,9 @@ class TradingEngine:
             return
 
         weighted_value = sum(
-            entry.entry_price * entry.remaining_quantity
+            float(entry.entry_price)
+            * float(entry.remaining_quantity or 0)
             for entry in entries
-            if entry.entry_price is not None
         )
 
         if weighted_value <= 0:
@@ -117,6 +142,7 @@ class TradingEngine:
         cycle.total_filled_quantity = total_quantity
 
         if cycle.direction == "LONG":
+
             adverse_percent = (
                 (average_price - price) / average_price
             ) * 100
@@ -126,6 +152,7 @@ class TradingEngine:
             ) * 100
 
         elif cycle.direction == "SHORT":
+
             adverse_percent = (
                 (price - average_price) / average_price
             ) * 100
@@ -148,53 +175,51 @@ class TradingEngine:
             adverse_percent=adverse_percent,
         )
 
-        if profit_percent >= cycle.tp_percent:
+        # Individual entry stop-loss checks run before cycle take-profit.
+        stop_result = stop_loss_manager.process_cycle(
+            db=db,
+            cycle=cycle,
+            current_price=price,
+        )
+
+        pending_close = (
+            db.query(CycleOrder)
+            .filter(
+                CycleOrder.cycle_id == cycle.id,
+                CycleOrder.reduce_position.is_(True),
+                CycleOrder.status.in_([
+                    "PENDING",
+                    "PARTIALLY_FILLED",
+                    "UNKNOWN",
+                ]),
+            )
+            .first()
+        )
+
+        if pending_close:
+            db.commit()
+            return
+
+        if stop_result.get("triggered_entries", 0) > 0:
+            db.commit()
+            return
+
+        # Cycle take-profit closes only entries belonging to this cycle.
+        tp_result = take_profit_manager.process_cycle(
+            db=db,
+            cycle=cycle,
+            current_price=price,
+        )
+
+        if tp_result.get("triggered"):
             self._record_event(
                 db,
                 cycle,
                 "TAKE_PROFIT_REACHED",
                 price,
                 profit_percent,
-                "Take profit threshold reached. "
-                "Actual order execution is not enabled in this engine.",
+                "Take-profit threshold reached. Closing orders submitted.",
             )
-
-        for entry in entries:
-            if not entry.entry_price:
-                continue
-
-            if cycle.direction == "LONG":
-                entry_loss = (
-                    (entry.entry_price - price)
-                    / entry.entry_price
-                ) * 100
-
-                stop_price = entry.entry_price * (
-                    1 - entry.stop_loss_percent / 100
-                )
-
-            else:
-                entry_loss = (
-                    (price - entry.entry_price)
-                    / entry.entry_price
-                ) * 100
-
-                stop_price = entry.entry_price * (
-                    1 + entry.stop_loss_percent / 100
-                )
-
-            entry.stop_loss_price = stop_price
-
-            if entry_loss >= entry.stop_loss_percent:
-                self._record_event(
-                    db,
-                    cycle,
-                    "ENTRY_STOP_LOSS_REACHED",
-                    price,
-                    entry_loss,
-                    f"Entry {entry.id} stop-loss threshold reached. "
-                    "Actual closing order is not enabled.",
-                )
 
         db.commit()
 
@@ -241,7 +266,8 @@ class TradingEngine:
                 price,
                 adverse_percent,
                 f"{event_type} threshold reached. "
-                "Order execution is handled by the order manager.",
+                "Automated averaging and opposite entries are not "
+                "connected yet.",
             )
 
     @staticmethod
@@ -254,9 +280,7 @@ class TradingEngine:
         message: str,
     ):
 
-        event_key = (
-            f"cycle-{cycle.id}-{event_type}"
-        )
+        event_key = f"cycle-{cycle.id}-{event_type}"
 
         existing = (
             db.query(CycleEvent)
