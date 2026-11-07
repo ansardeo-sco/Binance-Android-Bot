@@ -1,3 +1,4 @@
+
 import asyncio
 import logging
 
@@ -26,6 +27,13 @@ from api_routes import router
 logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
+
+
+ACTIVE_CYCLE_STATUSES = [
+    "ACTIVE",
+    "CLOSING_TP",
+    "ORDER_UNCONFIRMED",
+]
 
 
 Base.metadata.create_all(bind=engine)
@@ -166,18 +174,12 @@ def create_initial_entry(
             leverage=request.leverage,
         )
 
-        # اسی Coin اور اسی Direction میں پہلے سے فعال
-        # Cycle ہو تو نئی Initial Entry کی اجازت نہیں۔
         existing_cycle = (
             db.query(TradingCycle)
             .filter(
                 TradingCycle.symbol == validated["symbol"],
                 TradingCycle.direction == validated["direction"],
-                TradingCycle.status.in_([
-                    "ACTIVE",
-                    "CLOSING_TP",
-                    "ORDER_UNCONFIRMED",
-                ]),
+                TradingCycle.status.in_(ACTIVE_CYCLE_STATUSES),
             )
             .first()
         )
@@ -190,6 +192,27 @@ def create_initial_entry(
                     "An active or unconfirmed cycle already exists "
                     "for this symbol and direction. "
                     "Resolve it before creating another entry."
+                ),
+            )
+
+        # ایک کوائن میں تمام سمتوں کی Active Cycles گنیں۔
+        active_count = (
+            db.query(TradingCycle)
+            .filter(
+                TradingCycle.symbol == validated["symbol"],
+                TradingCycle.status.in_(ACTIVE_CYCLE_STATUSES),
+            )
+            .count()
+        )
+
+        if active_count >= settings.MAX_ACTIVE_CYCLES_PER_SYMBOL:
+
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Maximum active cycles limit reached for this symbol. "
+                    "Close or resolve an existing cycle before creating "
+                    "another entry."
                 ),
             )
 
@@ -344,11 +367,7 @@ def get_active_cycles(
     cycles = (
         db.query(TradingCycle)
         .filter(
-            TradingCycle.status.in_([
-                "ACTIVE",
-                "CLOSING_TP",
-                "ORDER_UNCONFIRMED",
-            ])
+            TradingCycle.status.in_(ACTIVE_CYCLE_STATUSES)
         )
         .order_by(
             TradingCycle.created_at.desc()
